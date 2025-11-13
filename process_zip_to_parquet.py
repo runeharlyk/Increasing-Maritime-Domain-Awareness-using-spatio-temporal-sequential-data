@@ -3,8 +3,27 @@ from pathlib import Path
 import time
 import zipfile
 import io
+import numpy as np
 import data_config as config
 from multiprocessing import Pool
+
+
+def haversine_distance(lat1, lon1, lat2, lon2):
+    R = 6371.0
+
+    lat1_rad = np.radians(lat1)
+    lat2_rad = np.radians(lat2)
+    lon1_rad = np.radians(lon1)
+    lon2_rad = np.radians(lon2)
+
+    dlat = lat2_rad - lat1_rad
+    dlon = lon2_rad - lon1_rad
+
+    a = np.sin(dlat / 2) ** 2 + np.cos(lat1_rad) * np.cos(lat2_rad) * np.sin(dlon / 2) ** 2
+    c = 2 * np.arctan2(np.sqrt(a), np.sqrt(1 - a))
+
+    distance = R * c
+    return distance
 
 
 def clean_dataframe(df):
@@ -115,6 +134,79 @@ def clean_dataframe(df):
     ).select(["MMSI", "Segment"])
     df = df.join(valid_segments, on=["MMSI", "Segment"], how="inner")
     print(f"  Removed {before - len(df)} rows from invalid segments. Rows now: {len(df)}")
+
+    if config.SPEED_ANOMALY_ACTION != "keep":
+        print(
+            f"  Filtering by point-to-point speed (max {config.MAX_POINT_TO_POINT_SPEED_KMH} km/h, action: {config.SPEED_ANOMALY_ACTION})..."
+        )
+        before = len(df)
+
+        segment_dfs = []
+        unique_mmsi = df["MMSI"].unique().to_list()
+
+        for mmsi in unique_mmsi:
+            mmsi_df = df.filter(pl.col("MMSI") == mmsi)
+            segments = mmsi_df["Segment"].unique().to_list()
+
+            for segment in segments:
+                seg_df = mmsi_df.filter(pl.col("Segment") == segment).sort("Timestamp")
+
+                if len(seg_df) < 2:
+                    segment_dfs.append(seg_df)
+                    continue
+
+                if config.SPEED_ANOMALY_ACTION == "drop":
+                    changed = True
+                    while changed and len(seg_df) >= 2:
+                        changed = False
+
+                        lats = seg_df["Latitude"].to_numpy()
+                        lons = seg_df["Longitude"].to_numpy()
+                        timestamps = seg_df["Timestamp"].to_list()
+
+                        distances_km = haversine_distance(lats[:-1], lons[:-1], lats[1:], lons[1:])
+                        time_diffs_hours = np.array(
+                            [
+                                (timestamps[i + 1] - timestamps[i]).total_seconds() / 3600.0
+                                for i in range(len(timestamps) - 1)
+                            ]
+                        )
+                        speeds_kmh = np.where(time_diffs_hours > 0, distances_km / time_diffs_hours, 0)
+
+                        violations = speeds_kmh > config.MAX_POINT_TO_POINT_SPEED_KMH
+                        if violations.any():
+                            keep_indices = [0] + [i + 1 for i in range(len(violations)) if not violations[i]]
+                            seg_df = seg_df[keep_indices]
+                            changed = True
+
+                elif config.SPEED_ANOMALY_ACTION == "drop_both":
+                    lats = seg_df["Latitude"].to_numpy()
+                    lons = seg_df["Longitude"].to_numpy()
+                    timestamps = seg_df["Timestamp"].to_list()
+
+                    distances_km = haversine_distance(lats[:-1], lons[:-1], lats[1:], lons[1:])
+                    time_diffs_hours = np.array(
+                        [
+                            (timestamps[i + 1] - timestamps[i]).total_seconds() / 3600.0
+                            for i in range(len(timestamps) - 1)
+                        ]
+                    )
+                    speeds_kmh = np.where(time_diffs_hours > 0, distances_km / time_diffs_hours, 0)
+
+                    violations = speeds_kmh > config.MAX_POINT_TO_POINT_SPEED_KMH
+                    drop_indices = set()
+                    for i in range(len(violations)):
+                        if violations[i]:
+                            drop_indices.add(i)
+                            drop_indices.add(i + 1)
+                    keep_indices = [i for i in range(len(seg_df)) if i not in drop_indices]
+                    seg_df = seg_df[keep_indices]
+
+                segment_dfs.append(seg_df)
+
+        df = pl.concat(segment_dfs, how="vertical")
+        df = df.sort(["MMSI", "Timestamp"])
+        print(f"  Removed {before - len(df)} rows with excessive point-to-point speed. Rows now: {len(df)}")
 
     print("  Converting SOG from knots to m/s...")
     df = df.with_columns((pl.col("SOG") * config.KNOTS_TO_MS).alias("SOG"))
