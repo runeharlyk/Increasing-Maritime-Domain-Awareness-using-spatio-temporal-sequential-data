@@ -1,12 +1,16 @@
-import polars as pl
 import numpy as np
 from pathlib import Path
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
-from sklearn.preprocessing import StandardScaler
 import matplotlib.pyplot as plt
-from tqdm import tqdm
+
+from preprocessing import (
+    load_and_prepare_data,
+    create_sequences,
+    split_by_vessel,
+    normalize_data,
+)
 
 # Configuration
 DATA_DIR = Path("data")
@@ -17,7 +21,7 @@ HIDDEN_SIZE = 128
 NUM_LAYERS = 2
 BATCH_SIZE = 32
 EPOCHS = 50
-LEARNING_RATE = 0.001
+LEARNING_RATE = 0.0001
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
@@ -66,185 +70,6 @@ class GRUTrajectoryPredictor(nn.Module):
         return output
 
 
-def load_and_prepare_data(data_dir):
-    """Load all parquet files from directory and prepare for training."""
-    print("Loading data...")
-
-    if not data_dir.exists():
-        raise FileNotFoundError(f"Data directory not found: {data_dir}")
-
-    parquet_files = sorted(data_dir.glob("*.parquet"))
-
-    if not parquet_files:
-        raise FileNotFoundError(f"No parquet files found in {data_dir}")
-
-    print(f"Found {len(parquet_files)} parquet files")
-
-    dfs = []
-    for file in tqdm(parquet_files, desc="Loading files"):
-        try:
-            df_temp = pl.read_parquet(file)
-            dfs.append(df_temp)
-        except Exception as e:
-            print(f"Warning: Failed to load {file.name}: {e}")
-
-    if not dfs:
-        raise ValueError("No data loaded successfully")
-
-    df = pl.concat(dfs, how="vertical")
-    print(f"Loaded {len(df)} rows from {len(dfs)} files")
-
-    # Check for required columns
-    required_cols = ["MMSI", "Latitude", "Longitude", "SOG", "COG"]
-    missing = [col for col in required_cols if col not in df.columns]
-    if missing:
-        raise ValueError(f"Missing required columns: {missing}")
-
-    # Check if timestamp exists, if not create synthetic one
-    if "Timestamp" not in df.columns:
-        print("Warning: No Timestamp column found. Creating synthetic timestamps...")
-        print("Note: For real training, you should include timestamps in clean_polars.py")
-        # Create synthetic timestamps assuming 1 minute intervals
-        df = df.sort("MMSI")
-
-        # Create synthetic timestamps for each MMSI
-        timestamps = []
-        for mmsi in df["MMSI"].unique().to_list():
-            vessel_df = df.filter(pl.col("MMSI") == mmsi)
-            n_points = len(vessel_df)
-            timestamps.extend([pl.datetime(2025, 1, 1) + pl.duration(minutes=i) for i in range(n_points)])
-
-        df = df.with_columns(pl.Series("Timestamp", timestamps))
-    else:
-        # Ensure timestamp is datetime
-        if df["Timestamp"].dtype != pl.Datetime:
-            df = df.with_columns(pl.col("Timestamp").cast(pl.Datetime))
-
-    # Sort by MMSI and timestamp
-    df = df.sort(["MMSI", "Timestamp"])
-
-    return df
-
-
-def create_sequences(df, input_hours, output_hours, sampling_rate):
-    """Create input-output sequences for training with MMSI tracking."""
-    print(f"\nCreating sequences ({input_hours}h input -> {output_hours}h output)...")
-
-    input_timesteps = int(input_hours * 60 / sampling_rate)
-    output_timesteps = int(output_hours * 60 / sampling_rate)
-
-    # Features to use for prediction
-    feature_cols = ["Latitude", "Longitude", "SOG", "COG"]
-
-    sequences = []
-    targets = []
-    mmsi_labels = []  # Track which MMSI each sequence belongs to
-
-    unique_mmsi = df["MMSI"].unique().to_list()
-
-    for mmsi in tqdm(unique_mmsi, desc="Processing vessels"):
-        # Filter for this vessel and convert to pandas for resampling
-        vessel_data = df.filter(pl.col("MMSI") == mmsi).to_pandas()
-
-        # Resample to consistent time intervals
-        vessel_data = vessel_data.set_index("Timestamp")
-        vessel_data = vessel_data.resample(f"{sampling_rate}min").first()
-        vessel_data = vessel_data.dropna(subset=feature_cols)
-
-        if len(vessel_data) < input_timesteps + output_timesteps:
-            continue
-
-        # Create sliding windows
-        for i in range(len(vessel_data) - input_timesteps - output_timesteps + 1):
-            input_seq = vessel_data.iloc[i : i + input_timesteps][feature_cols].values
-            output_seq = vessel_data.iloc[i + input_timesteps : i + input_timesteps + output_timesteps][
-                ["Latitude", "Longitude"]
-            ].values
-
-            # Check for valid sequences (no NaN)
-            if not (np.isnan(input_seq).any() or np.isnan(output_seq).any()):
-                sequences.append(input_seq)
-                targets.append(output_seq.flatten())
-                mmsi_labels.append(mmsi)  # Track the vessel
-
-    sequences = np.array(sequences)
-    targets = np.array(targets)
-    mmsi_labels = np.array(mmsi_labels)
-
-    print(f"Created {len(sequences)} sequences from {len(np.unique(mmsi_labels))} unique vessels")
-
-    return sequences, targets, mmsi_labels, feature_cols
-
-
-def split_by_vessel(sequences, targets, mmsi_labels, train_ratio=0.8, random_seed=42):
-    """Split data ensuring no vessel appears in both train and test sets."""
-
-    # Get unique vessels
-    unique_mmsi = np.unique(mmsi_labels)
-    n_vessels = len(unique_mmsi)
-
-    # Shuffle vessels
-    np.random.seed(random_seed)
-    shuffled_mmsi = np.random.permutation(unique_mmsi)
-
-    # Split vessels
-    split_idx = int(train_ratio * n_vessels)
-    train_mmsi = set(shuffled_mmsi[:split_idx])
-    test_mmsi = set(shuffled_mmsi[split_idx:])
-
-    print(f"\nVessel-based split:")
-    print(f"  Train vessels: {len(train_mmsi)}")
-    print(f"  Test vessels: {len(test_mmsi)}")
-
-    # Create masks
-    train_mask = np.array([mmsi in train_mmsi for mmsi in mmsi_labels])
-    test_mask = np.array([mmsi in test_mmsi for mmsi in mmsi_labels])
-
-    # Split data
-    X_train = sequences[train_mask]
-    X_test = sequences[test_mask]
-    y_train = targets[train_mask]
-    y_test = targets[test_mask]
-
-    print(f"  Train sequences: {len(X_train)}")
-    print(f"  Test sequences: {len(X_test)}")
-
-    # Verify no overlap
-    train_vessels_in_data = set(mmsi_labels[train_mask])
-    test_vessels_in_data = set(mmsi_labels[test_mask])
-    overlap = train_vessels_in_data & test_vessels_in_data
-
-    if overlap:
-        print(f"  ⚠️  WARNING: {len(overlap)} vessels appear in both sets!")
-    else:
-        print(f"  ✅ No vessel overlap - proper split confirmed!")
-
-    return X_train, X_test, y_train, y_test
-
-
-def normalize_data(X_train, X_test, y_train, y_test):
-    """Normalize features and targets."""
-    print("\nNormalizing data...")
-
-    # Normalize input features
-    input_scaler = StandardScaler()
-    n_samples, n_timesteps, n_features = X_train.shape
-    X_train_reshaped = X_train.reshape(-1, n_features)
-    X_train_scaled = input_scaler.fit_transform(X_train_reshaped)
-    X_train_scaled = X_train_scaled.reshape(n_samples, n_timesteps, n_features)
-
-    X_test_reshaped = X_test.reshape(-1, n_features)
-    X_test_scaled = input_scaler.transform(X_test_reshaped)
-    X_test_scaled = X_test_scaled.reshape(X_test.shape[0], n_timesteps, n_features)
-
-    # Normalize output (lat/lon pairs)
-    output_scaler = StandardScaler()
-    y_train_scaled = output_scaler.fit_transform(y_train)
-    y_test_scaled = output_scaler.transform(y_test)
-
-    return X_train_scaled, X_test_scaled, y_train_scaled, y_test_scaled, input_scaler, output_scaler
-
-
 def train_model(model, train_loader, criterion, optimizer, device):
     """Train the model for one epoch."""
     model.train()
@@ -258,6 +83,9 @@ def train_model(model, train_loader, criterion, optimizer, device):
         outputs = model(sequences)
         loss = criterion(outputs, targets)
         loss.backward()
+
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+
         optimizer.step()
 
         total_loss += loss.item()

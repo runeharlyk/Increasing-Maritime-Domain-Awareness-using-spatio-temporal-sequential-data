@@ -282,7 +282,7 @@ def main():
     print(f"Average segments per vessel: {segment_counts['segments'].mean():.1f}")
 
     # Save to parquet
-    out_path = data_dir / "2024-03-21.parquet"  # config.OUTPUT_FILE
+    out_path = data_dir / config.OUTPUT_FILE
     df.write_parquet(out_path, compression=config.COMPRESSION)
 
     # Report file size
