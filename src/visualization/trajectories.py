@@ -185,7 +185,7 @@ def create_prediction_map(full_trajectories, predictions, mmsi_list, output_hour
     center_lat = np.mean(all_lats)
     center_lon = np.mean(all_lons)
 
-    m = folium.Map(location=[center_lat, center_lon], zoom_start=10, tiles="OpenStreetMap")
+    m = folium.Map(location=[center_lat, center_lon], zoom_start=7, tiles="OpenStreetMap")
 
     output_timesteps = predictions.shape[1] // 2
 
