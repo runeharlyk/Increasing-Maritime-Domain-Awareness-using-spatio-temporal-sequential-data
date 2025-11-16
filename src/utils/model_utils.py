@@ -2,6 +2,7 @@ import numpy as np
 import polars as pl
 from pathlib import Path
 import torch
+import matplotlib.pyplot as plt
 
 
 def load_model_and_config(model_path, model_class, device="cpu"):
@@ -209,3 +210,74 @@ def calculate_prediction_errors(predictions, targets, mmsi_list):
         print(f"  MMSI {mmsi}: Mean error = {error.mean():.4f}°, Max error = {error.max():.4f}°")
     
     return errors
+
+
+def plot_training_history(train_losses, val_losses, model_name="encoder_decoder"):
+    plt.figure(figsize=(12, 6))
+
+    plt.subplot(1, 2, 1)
+    plt.plot(train_losses, label="Training Loss", linewidth=2)
+    plt.plot(val_losses, label="Validation Loss", linewidth=2)
+    plt.xlabel("Epoch", fontsize=12)
+    plt.ylabel("Loss", fontsize=12)
+    plt.title(f"Training History ({model_name})", fontsize=14)
+    plt.legend(fontsize=10)
+    plt.grid(True, alpha=0.3)
+
+    plt.subplot(1, 2, 2)
+    plt.plot(train_losses, label="Training Loss", linewidth=2)
+    plt.plot(val_losses, label="Validation Loss", linewidth=2)
+    plt.xlabel("Epoch", fontsize=12)
+    plt.ylabel("Loss (log scale)", fontsize=12)
+    plt.title("Training History - Log Scale", fontsize=14)
+    plt.yscale("log")
+    plt.legend(fontsize=10)
+    plt.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    filename = f"training_history_{model_name}.png"
+    plt.savefig(filename, dpi=300, bbox_inches="tight")
+    print(f"\nSaved training history to {filename}")
+
+
+def visualize_predictions(model, test_loader, output_scaler, device, n_samples=5, model_name="encoder_decoder", save_fig=False):
+    model.eval()
+    fig, axes = plt.subplots(n_samples, 2, figsize=(16, 4 * n_samples))
+
+    with torch.no_grad():
+        sequences, targets = next(iter(test_loader))
+        sequences_plot = sequences[:n_samples].to(device)
+        targets = targets[:n_samples].cpu().numpy()
+
+        predictions = model(sequences_plot, target_seq=None, teacher_forcing_ratio=0.0)
+        predictions = predictions.cpu().numpy()
+
+    targets = output_scaler.inverse_transform(targets)
+    predictions = output_scaler.inverse_transform(predictions)
+
+    output_timesteps = len(targets[0]) // 2
+
+    for i in range(n_samples):
+        true_traj = targets[i].reshape(output_timesteps, 2)
+        pred_traj = predictions[i].reshape(output_timesteps, 2)
+
+        axes[i, 0].plot(true_traj[:, 1], true_traj[:, 0], "b-o", label="True", markersize=6, linewidth=2)
+        axes[i, 0].plot(pred_traj[:, 1], pred_traj[:, 0], "r-o", label="Predicted", markersize=6, linewidth=2)
+        axes[i, 0].set_xlabel("Longitude", fontsize=11)
+        axes[i, 0].set_ylabel("Latitude", fontsize=11)
+        axes[i, 0].set_title(f"Trajectory Prediction {i+1}", fontsize=12)
+        axes[i, 0].legend(fontsize=10)
+        axes[i, 0].grid(True, alpha=0.3)
+
+        error = np.linalg.norm(true_traj - pred_traj, axis=1)
+        axes[i, 1].plot(error, "r-o", linewidth=2)
+        axes[i, 1].set_xlabel("Timestep", fontsize=11)
+        axes[i, 1].set_ylabel("Position Error (degrees)", fontsize=11)
+        axes[i, 1].set_title(f"Prediction Error {i+1}", fontsize=12)
+        axes[i, 1].grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    if save_fig:
+        plt.savefig(f"predictions_{model_name}.png", dpi=300, bbox_inches="tight")
+        print(f"Saved predictions to predictions_{model_name}.png")
+

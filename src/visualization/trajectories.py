@@ -102,8 +102,7 @@ def create_trajectory_map(df, output_path, max_vessels=100, center_lat=None, cen
     return m
 
 
-def plot_trajectory_comparison(full_trajectories, predictions, mmsi_list, output_hours, 
-                               output_path="trajectory_predictions.png"):
+def plot_trajectory_comparison(full_trajectories, predictions, mmsi_list, output_hours, output_path=None):
     n_vessels = len(full_trajectories)
     output_timesteps = predictions.shape[1] // 2
 
@@ -169,16 +168,14 @@ def plot_trajectory_comparison(full_trajectories, predictions, mmsi_list, output
         axes[i, 1].legend(fontsize=9)
 
     plt.tight_layout()
-    plt.savefig(output_path, dpi=300, bbox_inches="tight")
-    print(f"\nSaved matplotlib plot to {output_path}")
-    
+    if output_path is not None:
+        plt.savefig(output_path, dpi=300, bbox_inches="tight")
+        print(f"\nSaved matplotlib plot to {output_path}")
+
     return fig, axes
 
 
-def create_prediction_map(full_trajectories, predictions, mmsi_list, output_hours, 
-                         output_path="prediction_map.html"):
-    print("\nCreating interactive prediction map...")
-
+def create_prediction_map(full_trajectories, predictions, mmsi_list, output_hours, output_path=None):
     all_lats = []
     all_lons = []
     for traj in full_trajectories:
@@ -281,8 +278,9 @@ def create_prediction_map(full_trajectories, predictions, mmsi_list, output_hour
 
     plugins.Fullscreen().add_to(m)
 
-    m.save(output_path)
-    print(f"Saved interactive map to {output_path}")
+    if output_path is not None:
+        m.save(output_path)
+        print(f"Saved interactive map to {output_path}")
     
     return m
 
