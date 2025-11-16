@@ -1,6 +1,3 @@
-"""
-Configuration file for AIS data cleaning and filtering.
-"""
 
 # Geographic bounding box filter [north, west, south, east]
 BOUNDING_BOX = [60, 0, 50, 20]
@@ -31,9 +28,10 @@ KNOTS_TO_MS = 0.514444  # Conversion factor from knots to m/s
 # Point-to-point speed validation
 MAX_POINT_TO_POINT_SPEED_KMH = 110  # Maximum realistic speed between consecutive points
 SPEED_ANOMALY_ACTION = (
-    "drop"  # drop or keep
+    "drop"  # Options: "drop" (remove violating point), "drop_both" (remove both points in pair), "keep" (no filtering)
 )
 
 # Output settings
 OUTPUT_FILE = "filtered_vessels.parquet"
 COMPRESSION = "snappy"
+

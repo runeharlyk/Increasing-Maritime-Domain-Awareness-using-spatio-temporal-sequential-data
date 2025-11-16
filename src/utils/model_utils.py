@@ -1,0 +1,211 @@
+import numpy as np
+import polars as pl
+from pathlib import Path
+import torch
+
+
+def load_model_and_config(model_path, model_class, device="cpu"):
+    print(f"Loading model from {model_path}...")
+    
+    model_path = Path(model_path)
+    if not model_path.exists():
+        raise FileNotFoundError(f"Model file not found: {model_path}")
+    
+    checkpoint = torch.load(model_path, map_location=torch.device(device), weights_only=False)
+    
+    config = checkpoint["config"]
+    input_scaler = checkpoint["input_scaler"]
+    output_scaler = checkpoint["output_scaler"]
+    
+    if "output_seq_len" in config:
+        model = model_class(
+            input_size=config["input_size"],
+            hidden_size=config["hidden_size"],
+            num_layers=config["num_layers"],
+            output_seq_len=config["output_seq_len"],
+            dropout=config.get("dropout", 0.3),
+        )
+    else:
+        model = model_class(
+            input_size=config["input_size"],
+            hidden_size=config["hidden_size"],
+            num_layers=config["num_layers"],
+            output_size=config["output_size"],
+            dropout=config.get("dropout", 0.3),
+        )
+    
+    model.load_state_dict(checkpoint["model_state_dict"])
+    model.eval()
+    model.to(device)
+    
+    print(f"Model loaded successfully!")
+    print(f"  Input hours: {config['input_hours']}")
+    print(f"  Output hours: {config['output_hours']}")
+    print(f"  Sampling rate: {config['sampling_rate']} minutes")
+    
+    return model, config, input_scaler, output_scaler
+
+
+def load_trajectory_data(data_dir, parquet_files):
+    print(f"\nLoading trajectory data from {len(parquet_files)} file(s)...")
+    
+    data_dir = Path(data_dir)
+    parquet_paths = [data_dir / f for f in parquet_files]
+    
+    for parquet_path in parquet_paths:
+        if not parquet_path.exists():
+            raise FileNotFoundError(f"Parquet file not found: {parquet_path}")
+    
+    dfs = []
+    for parquet_path in parquet_paths:
+        print(f"  Loading {parquet_path.name}...")
+        df_temp = pl.read_parquet(parquet_path)
+        dfs.append(df_temp)
+    
+    df = pl.concat(dfs, how="vertical")
+    
+    print(f"Total rows: {len(df):,}")
+    print(f"Unique vessels (MMSI): {df['MMSI'].n_unique()}")
+    
+    df = df.sort(["MMSI", "Timestamp"])
+    
+    if df["Timestamp"].dtype != pl.Datetime:
+        df = df.with_columns(pl.col("Timestamp").cast(pl.Datetime))
+    
+    return df
+
+
+def create_prediction_sequences(df, config, n_vessels=None):
+    input_hours = config["input_hours"]
+    output_hours = config["output_hours"]
+    sampling_rate = config["sampling_rate"]
+    feature_cols = config["feature_cols"]
+    
+    input_timesteps = int(input_hours * 60 / sampling_rate)
+    output_timesteps = int(output_hours * 60 / sampling_rate)
+    min_length = input_timesteps + output_timesteps
+    
+    print(f"\nCreating prediction sequences:")
+    print(f"  Input: {input_hours}h ({input_timesteps} timesteps)")
+    print(f"  Output: {output_hours}h ({output_timesteps} timesteps)")
+    print(f"  Sampling rate: {sampling_rate} minutes")
+    
+    base_features = ["Latitude", "Longitude", "SOG", "COG"]
+    
+    df_processed = (
+        df.sort(["MMSI", "Timestamp"])
+        .group_by_dynamic("Timestamp", every=f"{sampling_rate}m", group_by="MMSI")
+        .agg(
+            [
+                pl.col("Latitude").first(),
+                pl.col("Longitude").first(),
+                pl.col("SOG").first(),
+                pl.col("COG").first(),
+            ]
+        )
+        .drop_nulls(subset=base_features)
+    )
+    
+    if any(col in feature_cols for col in ["hour", "day_of_week", "SOG_diff", "COG_diff"]):
+        df_processed = df_processed.with_columns(
+            [
+                (pl.col("Timestamp").dt.hour() / 24.0).alias("hour"),
+                (pl.col("Timestamp").dt.weekday() / 7.0).alias("day_of_week"),
+            ]
+        ).with_columns(
+            [
+                pl.col("SOG").diff().over("MMSI").fill_null(0).alias("SOG_diff"),
+                pl.col("COG").diff().over("MMSI").fill_null(0).alias("COG_diff"),
+            ]
+        )
+    
+    vessel_groups = df_processed.partition_by("MMSI", as_dict=True)
+    
+    sequences = []
+    targets = []
+    mmsi_list = []
+    full_trajectories = []
+    timestamps_list = []
+    
+    count = 0
+    for mmsi, vessel_data in vessel_groups.items():
+        n_points = len(vessel_data)
+        
+        if n_points < min_length:
+            continue
+        
+        data_array = vessel_data.select(feature_cols).to_numpy()
+        lat_lon = vessel_data.select(["Latitude", "Longitude"]).to_numpy()
+        timestamps = vessel_data.select("Timestamp").to_numpy().flatten()
+        
+        input_seq = data_array[0:input_timesteps]
+        output_seq = lat_lon[input_timesteps : input_timesteps + output_timesteps]
+        full_traj = lat_lon[0 : input_timesteps + output_timesteps]
+        traj_timestamps = timestamps[0 : input_timesteps + output_timesteps]
+        
+        if not (np.isnan(input_seq).any() or np.isnan(output_seq).any()):
+            sequences.append(input_seq)
+            targets.append(output_seq.flatten())
+            mmsi_list.append(mmsi[0])
+            full_trajectories.append(full_traj)
+            timestamps_list.append(traj_timestamps)
+            count += 1
+            
+            if n_vessels is not None and count >= n_vessels:
+                break
+    
+    sequences = np.array(sequences)
+    targets = np.array(targets)
+    
+    print(f"Created {len(sequences)} sequences from {len(mmsi_list)} vessels")
+    
+    return sequences, targets, mmsi_list, full_trajectories, timestamps_list
+
+
+def predict_trajectories(model, sequences, input_scaler, output_scaler, device="cpu"):
+    print("\nMaking predictions...")
+    
+    n_samples, n_timesteps, n_features = sequences.shape
+    sequences_reshaped = sequences.reshape(-1, n_features)
+    sequences_scaled = input_scaler.transform(sequences_reshaped)
+    sequences_scaled = sequences_scaled.reshape(n_samples, n_timesteps, n_features)
+    
+    sequences_tensor = torch.FloatTensor(sequences_scaled).to(device)
+    
+    with torch.no_grad():
+        model_output = model(sequences_tensor)
+        
+        if isinstance(model_output, tuple):
+            predictions, attention_weights = model_output
+            predictions = predictions.cpu().numpy()
+            attention_weights = attention_weights.cpu().numpy()
+        else:
+            predictions = model_output.cpu().numpy()
+            attention_weights = None
+    
+    predictions = output_scaler.inverse_transform(predictions)
+    
+    return predictions, attention_weights
+
+
+def calculate_prediction_errors(predictions, targets, mmsi_list):
+    print("\nCalculating prediction errors...")
+    
+    output_timesteps = predictions.shape[1] // 2
+    errors = {}
+    
+    for i, mmsi in enumerate(mmsi_list):
+        actual = targets[i].reshape(output_timesteps, 2)
+        pred = predictions[i].reshape(output_timesteps, 2)
+        error = np.linalg.norm(actual - pred, axis=1)
+        
+        errors[mmsi] = {
+            'mean': error.mean(),
+            'max': error.max(),
+            'min': error.min(),
+            'std': error.std()
+        }
+        
+        print(f"  MMSI {mmsi}: Mean error = {error.mean():.4f}°, Max error = {error.max():.4f}°")
+    
+    return errors
