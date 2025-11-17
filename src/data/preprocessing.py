@@ -82,7 +82,15 @@ def create_sequences(df, input_hours, output_hours, sampling_rate):
             ]
         )
         .drop_nulls(subset=feature_cols)
+        .with_columns(
+            [
+                (pl.col("COG") * np.pi / 180.0).sin().alias("COG_sin"),
+                (pl.col("COG") * np.pi / 180.0).cos().alias("COG_cos"),
+            ]
+        )
     )
+    
+    feature_cols = ["Latitude", "Longitude", "SOG", "COG_sin", "COG_cos"]
 
     sequences = []
     targets = []
@@ -145,17 +153,26 @@ def create_sequences_with_features(df, input_hours, output_hours, sampling_rate)
             [
                 (pl.col("Timestamp").dt.hour() / 24.0).alias("hour"),
                 (pl.col("Timestamp").dt.weekday() / 7.0).alias("day_of_week"),
+                pl.col("SOG").diff().over("MMSI").fill_null(0).alias("SOG_diff"),
             ]
         )
         .with_columns(
             [
-                pl.col("SOG").diff().over("MMSI").fill_null(0).alias("SOG_diff"),
-                pl.col("COG").diff().over("MMSI").fill_null(0).alias("COG_diff"),
+                (pl.col("COG") * np.pi / 180.0).sin().alias("COG_sin"),
+                (pl.col("COG") * np.pi / 180.0).cos().alias("COG_cos"),
+                (((pl.col("COG").diff().over("MMSI").fill_null(0) + 180) % 360) - 180).alias("COG_diff_raw"),
+            ]
+        )
+        .with_columns(
+            [
+                (pl.col("COG_diff_raw") * np.pi / 180.0).sin().alias("COG_diff_sin"),
+                (pl.col("COG_diff_raw") * np.pi / 180.0).cos().alias("COG_diff_cos"),
             ]
         )
     )
 
-    enhanced_features = feature_cols + ["hour", "day_of_week", "SOG_diff", "COG_diff"]
+    enhanced_features = ["Latitude", "Longitude", "SOG", "COG_sin", "COG_cos", 
+                        "hour", "day_of_week", "SOG_diff", "COG_diff_sin", "COG_diff_cos"]
 
     sequences = []
     targets = []

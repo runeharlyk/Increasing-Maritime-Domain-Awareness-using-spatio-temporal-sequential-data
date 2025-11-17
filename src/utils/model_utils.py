@@ -107,16 +107,29 @@ def create_prediction_sequences(df, config, n_vessels=None):
         .drop_nulls(subset=base_features)
     )
     
-    if any(col in feature_cols for col in ["hour", "day_of_week", "SOG_diff", "COG_diff"]):
+    if any(col in feature_cols for col in ["hour", "day_of_week", "SOG_diff", "COG_diff_sin", "COG_diff_cos"]):
         df_processed = df_processed.with_columns(
             [
                 (pl.col("Timestamp").dt.hour() / 24.0).alias("hour"),
                 (pl.col("Timestamp").dt.weekday() / 7.0).alias("day_of_week"),
+                pl.col("SOG").diff().over("MMSI").fill_null(0).alias("SOG_diff"),
             ]
         ).with_columns(
             [
-                pl.col("SOG").diff().over("MMSI").fill_null(0).alias("SOG_diff"),
-                pl.col("COG").diff().over("MMSI").fill_null(0).alias("COG_diff"),
+                (((pl.col("COG").diff().over("MMSI").fill_null(0) + 180) % 360) - 180).alias("COG_diff_raw"),
+            ]
+        ).with_columns(
+            [
+                (pl.col("COG_diff_raw") * np.pi / 180.0).sin().alias("COG_diff_sin"),
+                (pl.col("COG_diff_raw") * np.pi / 180.0).cos().alias("COG_diff_cos"),
+            ]
+        )
+    
+    if any(col in feature_cols for col in ["COG_sin", "COG_cos"]):
+        df_processed = df_processed.with_columns(
+            [
+                (pl.col("COG") * np.pi / 180.0).sin().alias("COG_sin"),
+                (pl.col("COG") * np.pi / 180.0).cos().alias("COG_cos"),
             ]
         )
     
