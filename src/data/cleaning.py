@@ -331,9 +331,6 @@ def process_multiple_zip_files(data_dir, num_workers=4):
     processed = sum(1 for r in results if r["success"])
     failed = sum(1 for r in results if not r["success"])
 
-    print("\n" + "=" * 60)
-    print("PROCESSING SUMMARY")
-    print("=" * 60)
     print(f"Total zip files: {len(zip_files)}")
     print(f"Processed: {processed}")
     print(f"Skipped (already exists): {skipped}")

@@ -6,6 +6,7 @@ from .model_utils import (
     create_prediction_sequences,
     predict_trajectories,
     calculate_prediction_errors,
+    HaversineLoss
 )
 
 __all__ = [
@@ -16,4 +17,5 @@ __all__ = [
     'create_prediction_sequences',
     'predict_trajectories',
     'calculate_prediction_errors',
+    'HaversineLoss'
 ]

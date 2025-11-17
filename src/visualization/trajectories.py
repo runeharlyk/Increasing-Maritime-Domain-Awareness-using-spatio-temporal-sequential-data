@@ -11,7 +11,7 @@ def generate_random_color():
 
 def create_trajectory_map(df, max_vessels=100, center_lat=None, center_lon=None, zoom_start=7, output_path=None):
     import polars as pl
-    
+
     if center_lat is None:
         center_lat = df["Latitude"].mean()
     if center_lon is None:
@@ -34,7 +34,7 @@ def create_trajectory_map(df, max_vessels=100, center_lat=None, center_lon=None,
     group_cols = ["MMSI", "Segment"]
     if "FileIndex" in df_filtered.columns:
         group_cols.insert(1, "FileIndex")
-    
+
     segments_df = df_filtered.group_by(group_cols).agg(
         [
             pl.col("Latitude").alias("lats"),
@@ -99,7 +99,7 @@ def create_trajectory_map(df, max_vessels=100, center_lat=None, center_lon=None,
     if output_path:
         m.save(output_path)
         print(f"\nMap saved to {output_path}")
-    
+
     return m
 
 
@@ -117,7 +117,7 @@ def plot_trajectory_comparison(full_trajectories, predictions, mmsi_list, output
         pred_traj = predictions[i].reshape(output_timesteps, 2)
 
         input_traj = full_traj[: len(full_traj) - output_timesteps]
-        output_traj = full_traj[len(full_traj) - output_timesteps :]
+        output_traj = full_traj[len(full_traj) - output_timesteps:]
 
         # Plot trajectories
         axes[i, 0].plot(
@@ -195,7 +195,7 @@ def create_prediction_map(full_trajectories, predictions, mmsi_list, output_hour
         mmsi = mmsi_list[i]
 
         input_traj = full_traj[: len(full_traj) - output_timesteps]
-        output_traj = full_traj[len(full_traj) - output_timesteps :]
+        output_traj = full_traj[len(full_traj) - output_timesteps:]
 
         color_input = generate_random_color()
 
@@ -282,6 +282,5 @@ def create_prediction_map(full_trajectories, predictions, mmsi_list, output_hour
     if output_path is not None:
         m.save(output_path)
         print(f"Saved interactive map to {output_path}")
-    
-    return m
 
+    return m

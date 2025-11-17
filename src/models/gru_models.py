@@ -128,7 +128,7 @@ class EncoderDecoderGRU(nn.Module):
 
             # Teacher forcing
             if target_seq is not None and torch.rand(1).item() < teacher_forcing_ratio:
-                decoder_input = target_seq[:, t : t + 1, :]
+                decoder_input = target_seq[:, t: t + 1, :]
             else:
                 decoder_input = prediction
 

@@ -13,6 +13,7 @@ from src.data.preprocessing import (
     normalize_data,
 )
 from src.models import TrajectoryDataset, EncoderDecoderGRU
+from src.utils.model_utils import HaversineLoss
 
 DATA_DIR = Path("data")
 MODEL_PATH = "best_model_encoder_decoder.pt"
@@ -27,7 +28,7 @@ EPOCHS = 100
 LEARNING_RATE = 0.0001
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-print(u"Using device: ", DEVICE)
+print("Using device: ", DEVICE)
 
 # Initialize Weights & Biases
 wandb.init(
@@ -46,7 +47,7 @@ wandb.init(
         "early_stop_patience": 20,
         "model": "EncoderDecoderGRU",
         "device": str(DEVICE),
-    }
+    },
 )
 
 # Prepare data
@@ -87,9 +88,10 @@ print(f"\nTotal parameters: {total_params:,}")
 wandb.config.update({"input_size": input_size, "total_parameters": total_params})
 wandb.watch(model, log="all", log_freq=100)
 
-criterion = nn.MSELoss()
+criterion = HaversineLoss()
 optimizer = torch.optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-5)
 scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=10)
+
 
 def train_model(model, train_loader, criterion, optimizer, device, epoch, total_epochs):
     """Train the model for one epoch."""
@@ -137,6 +139,7 @@ def evaluate_model(model, test_loader, criterion, device):
 
     return total_loss / len(test_loader)
 
+
 print(f"\nStarting training for {EPOCHS} epochs...")
 train_losses = []
 val_losses = []
@@ -152,15 +155,17 @@ for epoch in range(EPOCHS):
     val_losses.append(val_loss)
 
     scheduler.step(val_loss)
-    current_lr = optimizer.param_groups[0]['lr']
+    current_lr = optimizer.param_groups[0]["lr"]
 
     # Log metrics to wandb
-    wandb.log({
-        "epoch": epoch + 1,
-        "train_loss": train_loss,
-        "val_loss": val_loss,
-        "learning_rate": current_lr,
-    })
+    wandb.log(
+        {
+            "epoch": epoch + 1,
+            "train_loss": train_loss,
+            "val_loss": val_loss,
+            "learning_rate": current_lr,
+        }
+    )
 
     print(f"Epoch [{epoch+1}/{EPOCHS}] - " f"Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}")
 
@@ -189,7 +194,7 @@ for epoch in range(EPOCHS):
             "best_model_encoder_decoder.pt",
         )
         print(f"  -> Saved best model (val_loss: {val_loss:.6f})")
-        
+
         # Log best model to wandb
         wandb.log({"best_val_loss": best_val_loss})
         wandb.save("best_model_encoder_decoder.pt")
