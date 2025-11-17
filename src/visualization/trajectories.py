@@ -9,7 +9,7 @@ def generate_random_color():
     return "#{:06x}".format(random.randint(0, 0xFFFFFF))
 
 
-def create_trajectory_map(df, output_path, max_vessels=100, center_lat=None, center_lon=None, zoom_start=7):
+def create_trajectory_map(df, max_vessels=100, center_lat=None, center_lon=None, zoom_start=7, output_path=None):
     import polars as pl
     
     if center_lat is None:
@@ -96,8 +96,9 @@ def create_trajectory_map(df, output_path, max_vessels=100, center_lat=None, cen
 
     plugins.Fullscreen().add_to(m)
 
-    m.save(output_path)
-    print(f"\nMap saved to {output_path}")
+    if output_path:
+        m.save(output_path)
+        print(f"\nMap saved to {output_path}")
     
     return m
 
