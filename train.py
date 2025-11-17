@@ -14,6 +14,9 @@ from src.data.preprocessing import (
 )
 from src.models import TrajectoryDataset, EncoderDecoderGRU
 from src.utils.model_utils import HaversineLoss
+from src.utils import set_seed
+
+set_seed(42)
 
 DATA_DIR = Path("data")
 MODEL_PATH = "best_model_encoder_decoder.pt"
@@ -23,7 +26,7 @@ OUTPUT_HOURS = 1
 SAMPLING_RATE = 5
 HIDDEN_SIZE = 256
 NUM_LAYERS = 3
-BATCH_SIZE = 64
+BATCH_SIZE = 1024
 EPOCHS = 100
 LEARNING_RATE = 0.0001
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -64,8 +67,8 @@ X_train, X_test, y_train, y_test, input_scaler, output_scaler = normalize_data(X
 train_dataset = TrajectoryDataset(X_train, y_train)
 test_dataset = TrajectoryDataset(X_test, y_test)
 
-train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=0)
-test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=0)
+train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=8)
+test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=8)
 
 input_size = len(feature_cols)
 output_timesteps = y_train.shape[1] // 2
