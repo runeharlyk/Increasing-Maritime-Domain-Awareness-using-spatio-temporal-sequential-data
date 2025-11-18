@@ -91,7 +91,7 @@ print(f"\nTotal parameters: {total_params:,}")
 wandb.config.update({"input_size": input_size, "total_parameters": total_params})
 wandb.watch(model, log="all", log_freq=100)
 
-criterion = HaversineLoss()
+criterion = HaversineLoss(output_scaler)
 optimizer = torch.optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-5)
 scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=10)
 

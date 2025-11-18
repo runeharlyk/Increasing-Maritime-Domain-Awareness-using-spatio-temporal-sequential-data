@@ -8,12 +8,18 @@ from src.utils.geo import haversine_distance_torch
 
 
 class HaversineLoss(torch.nn.Module):
-    def __init__(self):
+    def __init__(self, output_scaler):
         super(HaversineLoss, self).__init__()
+        self.output_scaler = output_scaler
+        self.register_buffer('scale_', torch.FloatTensor(output_scaler.scale_))
+        self.register_buffer('mean_', torch.FloatTensor(output_scaler.mean_))
 
     def forward(self, predictions, targets):
-        pred_reshaped = predictions.reshape(-1, 2)
-        target_reshaped = targets.reshape(-1, 2)
+        pred_unscaled = predictions * self.scale_ + self.mean_
+        target_unscaled = targets * self.scale_ + self.mean_
+        
+        pred_reshaped = pred_unscaled.reshape(-1, 2)
+        target_reshaped = target_unscaled.reshape(-1, 2)
 
         pred_lat = pred_reshaped[:, 0]
         pred_lon = pred_reshaped[:, 1]
