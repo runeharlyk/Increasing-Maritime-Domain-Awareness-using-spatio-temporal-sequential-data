@@ -5,7 +5,59 @@ from sklearn.preprocessing import StandardScaler
 from tqdm import tqdm
 
 
-def load_and_prepare_data(data_dir):
+def merge_cross_file_segments(df, max_time_gap_minutes=30):
+    print("\nMerging continuous segments across file boundaries...")
+
+    df = df.sort(["MMSI", "FileIndex", "Timestamp"])
+    segment_stats = (
+        df.group_by(["MMSI", "FileIndex", "Segment"])
+        .agg([
+            pl.col("Timestamp").min().alias("seg_start"),
+            pl.col("Timestamp").max().alias("seg_end"),
+        ])
+        .sort(["MMSI", "FileIndex", "seg_start"])
+    )
+    
+    segment_stats = segment_stats.with_columns([
+        pl.col("seg_end").shift(1).over("MMSI").alias("prev_seg_end"),
+        pl.col("FileIndex").shift(1).over("MMSI").alias("prev_file_idx"),
+    ])
+    
+    segment_stats = segment_stats.with_columns([
+        ((pl.col("seg_start") - pl.col("prev_seg_end")).dt.total_minutes()).alias("time_gap_minutes"),
+    ])
+    
+    segment_stats = segment_stats.with_columns([
+        (
+            (pl.col("FileIndex") != pl.col("prev_file_idx")) &
+            (pl.col("time_gap_minutes") >= 0) &
+            (pl.col("time_gap_minutes") <= max_time_gap_minutes)
+        ).fill_null(False).not_().cast(pl.Int32).alias("is_new_segment")
+    ])
+    
+    segment_stats = segment_stats.with_columns([
+        pl.col("is_new_segment").cum_sum().over("MMSI").alias("GlobalSegment")
+    ])
+    
+    df = df.join(
+        segment_stats.select(["MMSI", "FileIndex", "Segment", "GlobalSegment"]),
+        on=["MMSI", "FileIndex", "Segment"],
+        how="left"
+    )
+
+    original_count = segment_stats.height
+    global_count = df.select(["MMSI", "GlobalSegment"]).n_unique()
+    merged_count = original_count - global_count
+
+    print(f"  Original (MMSI, FileIndex, Segment) combinations: {original_count}")
+    print(f"  Merged (MMSI, GlobalSegment) combinations: {global_count}")
+    print(f"  Merged {merged_count} segment pairs across file boundaries")
+    print(f"  Time gap threshold: {max_time_gap_minutes} minutes")
+
+    return df
+
+
+def load_and_prepare_data(data_dir, max_time_gap_minutes=30):
     print("Loading data...")
 
     data_dir = Path(data_dir)
@@ -38,10 +90,9 @@ def load_and_prepare_data(data_dir):
     missing = [col for col in required_cols if col not in df.columns]
     assert len(missing) == 0, f"Missing required columns: {missing}"
 
-    assert df["Segment"].is_not_null().all(), "Segment contains null values"
-    assert df["Timestamp"].is_not_null().all(), "Timestamp contains null values"
-
     df = df.sort(["MMSI", "Timestamp"])
+
+    df = merge_cross_file_segments(df, max_time_gap_minutes=max_time_gap_minutes)
 
     return df
 
@@ -55,103 +106,18 @@ def create_sequences(df, input_hours, output_hours, sampling_rate):
 
     feature_cols = ["Latitude", "Longitude", "SOG", "COG"]
 
-    print("Resampling with Polars...")
-
-    agg_cols = [
-        pl.col("Latitude").first(),
-        pl.col("Longitude").first(),
-        pl.col("SOG").first(),
-        pl.col("COG").first(),
-        pl.col("Segment").first(),
-    ]
-
-    if "FileIndex" in df.columns:
-        agg_cols.append(pl.col("FileIndex").first())
-
-    df_processed = (
-        df.sort(["MMSI", "Timestamp"])
-        .group_by_dynamic("Timestamp", every=f"{sampling_rate}m", by="MMSI")
-        .agg(agg_cols)
-        .drop_nulls(subset=feature_cols)
-        .with_columns(
-            [
-                (pl.col("COG") * np.pi / 180.0).sin().alias("COG_sin"),
-                (pl.col("COG") * np.pi / 180.0).cos().alias("COG_cos"),
-            ]
-        )
-    )
-
-    feature_cols = ["Latitude", "Longitude", "SOG", "COG_sin", "COG_cos"]
-
-    sequences = []
-    targets = []
-    mmsi_labels = []
-
-    stride = input_timesteps
-    print(f"Creating sequences with stride={stride}")
-
-    group_cols = ["MMSI", "Segment"]
-    if "FileIndex" in df_processed.columns:
-        group_cols.insert(1, "FileIndex")
-        print(f"Processing by {group_cols} to avoid crossing trajectory gaps and date boundaries...")
-    else:
-        print(f"Processing by {group_cols} to avoid crossing trajectory gaps...")
-
-    segment_groups = df_processed.partition_by(group_cols, as_dict=True)
-
-    for group_key, vessel_data in tqdm(segment_groups.items(), desc="Processing segments"):
-        n_points = len(vessel_data)
-
-        if n_points < min_length:
-            continue
-
-        data_array = vessel_data.select(feature_cols).to_numpy()
-        lat_lon = vessel_data.select(["Latitude", "Longitude"]).to_numpy()
-
-        mmsi = group_key[0] if isinstance(group_key, tuple) else group_key
-
-        for i in range(0, n_points - min_length + 1, stride):
-            input_seq = data_array[i : i + input_timesteps]
-            output_seq = lat_lon[i + input_timesteps : i + input_timesteps + output_timesteps]
-
-            if not (np.isnan(input_seq).any() or np.isnan(output_seq).any()):
-                sequences.append(input_seq)
-                targets.append(output_seq.flatten())
-                mmsi_labels.append(mmsi)
-
-    sequences = np.array(sequences)
-    targets = np.array(targets)
-    mmsi_labels = np.array(mmsi_labels)
-
-    print(f"Created {len(sequences)} sequences from {len(np.unique(mmsi_labels))} unique vessels")
-    print(f"  Stride: {stride} timesteps ({stride * sampling_rate} minutes)")
-    overlap_pct = max(0, (input_timesteps - stride) / input_timesteps * 100)
-    print(f"  Sequence overlap: ~{overlap_pct:.1f}%")
-
-    return sequences, targets, mmsi_labels, feature_cols
-
-
-def create_sequences_with_features(df, input_hours, output_hours, sampling_rate):
-    print(f"\nCreating sequences ({input_hours}h input -> {output_hours}h output)...")
-
-    input_timesteps = int(input_hours * 60 / sampling_rate)
-    output_timesteps = int(output_hours * 60 / sampling_rate)
-    min_length = input_timesteps + output_timesteps
-
-    feature_cols = ["Latitude", "Longitude", "SOG", "COG"]
-
     print("Resampling and adding features with Polars...")
 
+    if "GlobalSegment" not in df.columns:
+        raise ValueError("'GlobalSegment' column not found. Ensure merge_cross_file_segments() was called in load_and_prepare_data()")
+
     agg_cols = [
         pl.col("Latitude").first(),
         pl.col("Longitude").first(),
         pl.col("SOG").first(),
         pl.col("COG").first(),
-        pl.col("Segment").first(),
+        pl.col("GlobalSegment").first(),
     ]
-
-    if "FileIndex" in df.columns:
-        agg_cols.append(pl.col("FileIndex").first())
 
     df_processed = (
         df.sort(["MMSI", "Timestamp"])
@@ -174,8 +140,8 @@ def create_sequences_with_features(df, input_hours, output_hours, sampling_rate)
         )
         .with_columns(
             [
-                pl.col("SOG").diff().over(["MMSI", "Segment"]).fill_null(0).alias("SOG_diff"),
-                (((pl.col("COG").diff().over(["MMSI", "Segment"]).fill_null(0) + 180) % 360) - 180).alias(
+                pl.col("SOG").diff().over(["MMSI", "GlobalSegment"]).fill_null(0).alias("SOG_diff"),
+                (((pl.col("COG").diff().over(["MMSI", "GlobalSegment"]).fill_null(0) + 180) % 360) - 180).alias(
                     "COG_diff_raw"
                 ),
             ]
@@ -207,15 +173,11 @@ def create_sequences_with_features(df, input_hours, output_hours, sampling_rate)
     targets = []
     mmsi_labels = []
 
-    stride = input_timesteps
+    stride = 1
     print(f"Creating sequences with stride={stride}")
 
-    group_cols = ["MMSI", "Segment"]
-    if "FileIndex" in df_processed.columns:
-        group_cols.insert(1, "FileIndex")
-        print(f"Processing by {group_cols} to avoid crossing trajectory gaps and date boundaries...")
-    else:
-        print(f"Processing by {group_cols} to avoid crossing trajectory gaps...")
+    group_cols = ["MMSI", "GlobalSegment"]
+    print(f"Processing by {group_cols} (merged continuous segments across files)...")
 
     segment_groups = df_processed.partition_by(group_cols, as_dict=True)
 

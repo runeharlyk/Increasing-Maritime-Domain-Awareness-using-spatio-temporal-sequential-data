@@ -177,7 +177,7 @@ def create_prediction_sequences(df, config, n_vessels=None):
         pl.col("Longitude").first(),
         pl.col("SOG").first(),
         pl.col("COG").first(),
-        pl.col("Segment").first(),
+        pl.col("GlobalSegment").first(),
     ]
 
     if "FileIndex" in df.columns:
@@ -213,8 +213,8 @@ def create_prediction_sequences(df, config, n_vessels=None):
             )
             .with_columns(
                 [
-                    pl.col("SOG").diff().over(["MMSI", "Segment"]).fill_null(0).alias("SOG_diff"),
-                    (((pl.col("COG").diff().over(["MMSI", "Segment"]).fill_null(0) + 180) % 360) - 180).alias(
+                    pl.col("SOG").diff().over(["MMSI", "GlobalSegment"]).fill_null(0).alias("SOG_diff"),
+                    (((pl.col("COG").diff().over(["MMSI", "GlobalSegment"]).fill_null(0) + 180) % 360) - 180).alias(
                         "COG_diff_raw"
                     ),
                 ]
@@ -235,12 +235,8 @@ def create_prediction_sequences(df, config, n_vessels=None):
             ]
         )
 
-    group_cols = ["MMSI", "Segment"]
-    if "FileIndex" in df_processed.columns:
-        group_cols.insert(1, "FileIndex")
-        print(f"  Processing by {group_cols} to avoid crossing trajectory gaps and date boundaries...")
-    else:
-        print(f"  Processing by {group_cols} to avoid crossing trajectory gaps...")
+    group_cols = ["MMSI", "GlobalSegment"]
+    print(f"  Processing by {group_cols}")
 
     segment_groups = df_processed.partition_by(group_cols, as_dict=True)
 
@@ -329,24 +325,6 @@ def predict_trajectories(model, sequences, input_scaler, output_scaler, device="
     predictions = output_scaler.inverse_transform(predictions_reshaped).reshape(predictions.shape[0], -1)
 
     return predictions, attention_weights
-
-
-def calculate_prediction_errors(predictions, targets, mmsi_list):
-    print("\nCalculating prediction errors...")
-
-    output_timesteps = predictions.shape[1] // 2
-    errors = {}
-
-    for i, mmsi in enumerate(mmsi_list):
-        actual = targets[i].reshape(output_timesteps, 2)
-        pred = predictions[i].reshape(output_timesteps, 2)
-        error = np.linalg.norm(actual - pred, axis=1)
-
-        errors[mmsi] = {"mean": error.mean(), "max": error.max(), "min": error.min(), "std": error.std()}
-
-        print(f"  MMSI {mmsi}: Mean error = {error.mean():.4f}°, Max error = {error.max():.4f}°")
-
-    return errors
 
 
 def plot_training_history(train_losses, val_losses, model_name="encoder_decoder"):

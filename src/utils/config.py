@@ -1,4 +1,3 @@
-
 # Geographic bounding box filter [north, west, south, east]
 BOUNDING_BOX = [60, 0, 50, 20]
 
@@ -15,8 +14,8 @@ MMSI_MID_MAX = 775  # Maximum Maritime Identification Digits
 
 # Track filtering thresholds
 TRACK_MIN_LENGTH = 100  # Minimum number of datapoints per track/segment
-TRACK_MIN_SOG = 1  # Minimum SOG in knots
-TRACK_MAX_SOG = 50  # Maximum SOG in knots
+TRACK_MIN_SOG = 5  # Minimum SOG in knots
+TRACK_MAX_SOG = 60  # Maximum SOG in knots
 TRACK_MIN_TIMESPAN = 60 * 60  # Minimum timespan in seconds (1 hour)
 
 # Segment creation
@@ -34,4 +33,3 @@ SPEED_ANOMALY_ACTION = (
 # Output settings
 OUTPUT_FILE = "filtered_vessels.parquet"
 COMPRESSION = "snappy"
-

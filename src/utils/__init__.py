@@ -5,7 +5,6 @@ from .model_utils import (
     load_trajectory_data,
     create_prediction_sequences,
     predict_trajectories,
-    calculate_prediction_errors,
     HaversineLoss,
 )
 from .randomness import set_seed
@@ -17,7 +16,6 @@ __all__ = [
     "load_trajectory_data",
     "create_prediction_sequences",
     "predict_trajectories",
-    "calculate_prediction_errors",
     "HaversineLoss",
     "set_seed",
 ]

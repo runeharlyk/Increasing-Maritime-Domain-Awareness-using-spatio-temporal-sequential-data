@@ -8,7 +8,7 @@ import wandb
 
 from src.data.preprocessing import (
     load_and_prepare_data,
-    create_sequences_with_features,
+    create_sequences,
     split_by_vessel,
     normalize_data,
 )
@@ -61,7 +61,7 @@ wandb.init(
 # Prepare data
 
 df = load_and_prepare_data(DATA_DIR)
-sequences, targets, mmsi_labels, feature_cols = create_sequences_with_features(
+sequences, targets, mmsi_labels, feature_cols = create_sequences(
     df, INPUT_HOURS, OUTPUT_HOURS, SAMPLING_RATE
 )
 
