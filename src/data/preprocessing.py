@@ -20,9 +20,10 @@ def load_and_prepare_data(data_dir):
     print(f"Found {len(parquet_files)} parquet files")
 
     dfs = []
-    for file in tqdm(parquet_files, desc="Loading files"):
+    for idx, file in enumerate(tqdm(parquet_files, desc="Loading files")):
         try:
             df_temp = pl.read_parquet(file)
+            df_temp = df_temp.with_columns(pl.lit(idx).alias("FileIndex"))
             dfs.append(df_temp)
         except Exception as e:
             print(f"Warning: Failed to load {file.name}: {e}")
@@ -33,26 +34,12 @@ def load_and_prepare_data(data_dir):
     df = pl.concat(dfs, how="vertical")
     print(f"Loaded {len(df)} rows from {len(dfs)} files")
 
-    required_cols = ["MMSI", "Latitude", "Longitude", "SOG", "COG"]
+    required_cols = ["MMSI", "Latitude", "Longitude", "SOG", "COG", "Segment", "Timestamp"]
     missing = [col for col in required_cols if col not in df.columns]
-    if missing:
-        raise ValueError(f"Missing required columns: {missing}")
-
-    if "Timestamp" not in df.columns:
-        print("Warning: No Timestamp column found. Creating synthetic timestamps...")
-        print("Note: For real training, you should include timestamps in clean_polars.py")
-        df = df.sort("MMSI")
-
-        timestamps = []
-        for mmsi in df["MMSI"].unique().to_list():
-            vessel_df = df.filter(pl.col("MMSI") == mmsi)
-            n_points = len(vessel_df)
-            timestamps.extend([pl.datetime(2025, 1, 1) + pl.duration(minutes=i) for i in range(n_points)])
-
-        df = df.with_columns(pl.Series("Timestamp", timestamps))
-    else:
-        if df["Timestamp"].dtype != pl.Datetime:
-            df = df.with_columns(pl.col("Timestamp").cast(pl.Datetime))
+    assert len(missing) == 0, f"Missing required columns: {missing}"
+    
+    assert df["Segment"].is_not_null().all(), "Segment contains null values"
+    assert df["Timestamp"].is_not_null().all(), "Timestamp contains null values"
 
     df = df.sort(["MMSI", "Timestamp"])
 
@@ -69,18 +56,22 @@ def create_sequences(df, input_hours, output_hours, sampling_rate):
     feature_cols = ["Latitude", "Longitude", "SOG", "COG"]
 
     print("Resampling with Polars...")
+    
+    agg_cols = [
+        pl.col("Latitude").first(),
+        pl.col("Longitude").first(),
+        pl.col("SOG").first(),
+        pl.col("COG").first(),
+        pl.col("Segment").first(),
+    ]
+    
+    if "FileIndex" in df.columns:
+        agg_cols.append(pl.col("FileIndex").first())
 
     df_processed = (
         df.sort(["MMSI", "Timestamp"])
         .group_by_dynamic("Timestamp", every=f"{sampling_rate}m", by="MMSI")
-        .agg(
-            [
-                pl.col("Latitude").first(),
-                pl.col("Longitude").first(),
-                pl.col("SOG").first(),
-                pl.col("COG").first(),
-            ]
-        )
+        .agg(agg_cols)
         .drop_nulls(subset=feature_cols)
         .with_columns(
             [
@@ -98,9 +89,17 @@ def create_sequences(df, input_hours, output_hours, sampling_rate):
 
     stride = output_timesteps
     print(f"Creating sequences with stride={stride}")
-    vessel_groups = df_processed.partition_by("MMSI", as_dict=True)
+    
+    group_cols = ["MMSI", "Segment"]
+    if "FileIndex" in df_processed.columns:
+        group_cols.insert(1, "FileIndex")
+        print(f"Processing by {group_cols} to avoid crossing trajectory gaps and date boundaries...")
+    else:
+        print(f"Processing by {group_cols} to avoid crossing trajectory gaps...")
+    
+    segment_groups = df_processed.partition_by(group_cols, as_dict=True)
 
-    for mmsi, vessel_data in tqdm(vessel_groups.items(), desc="Processing vessels"):
+    for group_key, vessel_data in tqdm(segment_groups.items(), desc="Processing segments"):
         n_points = len(vessel_data)
 
         if n_points < min_length:
@@ -108,6 +107,8 @@ def create_sequences(df, input_hours, output_hours, sampling_rate):
 
         data_array = vessel_data.select(feature_cols).to_numpy()
         lat_lon = vessel_data.select(["Latitude", "Longitude"]).to_numpy()
+        
+        mmsi = group_key[0] if isinstance(group_key, tuple) else group_key
 
         for i in range(0, n_points - min_length + 1, stride):
             input_seq = data_array[i : i + input_timesteps]
@@ -116,7 +117,7 @@ def create_sequences(df, input_hours, output_hours, sampling_rate):
             if not (np.isnan(input_seq).any() or np.isnan(output_seq).any()):
                 sequences.append(input_seq)
                 targets.append(output_seq.flatten())
-                mmsi_labels.append(mmsi[0])
+                mmsi_labels.append(mmsi)
 
     sequences = np.array(sequences)
     targets = np.array(targets)
@@ -140,18 +141,22 @@ def create_sequences_with_features(df, input_hours, output_hours, sampling_rate)
     feature_cols = ["Latitude", "Longitude", "SOG", "COG"]
 
     print("Resampling and adding features with Polars...")
+    
+    agg_cols = [
+        pl.col("Latitude").first(),
+        pl.col("Longitude").first(),
+        pl.col("SOG").first(),
+        pl.col("COG").first(),
+        pl.col("Segment").first(),
+    ]
+    
+    if "FileIndex" in df.columns:
+        agg_cols.append(pl.col("FileIndex").first())
 
     df_processed = (
         df.sort(["MMSI", "Timestamp"])
         .group_by_dynamic("Timestamp", every=f"{sampling_rate}m", by="MMSI")
-        .agg(
-            [
-                pl.col("Latitude").first(),
-                pl.col("Longitude").first(),
-                pl.col("SOG").first(),
-                pl.col("COG").first(),
-            ]
-        )
+        .agg(agg_cols)
         .drop_nulls(subset=feature_cols)
         .with_columns(
             [
@@ -184,9 +189,17 @@ def create_sequences_with_features(df, input_hours, output_hours, sampling_rate)
 
     stride = output_timesteps
     print(f"Creating sequences with stride={stride}")
-    vessel_groups = df_processed.partition_by("MMSI", as_dict=True)
+    
+    group_cols = ["MMSI", "Segment"]
+    if "FileIndex" in df_processed.columns:
+        group_cols.insert(1, "FileIndex")
+        print(f"Processing by {group_cols} to avoid crossing trajectory gaps and date boundaries...")
+    else:
+        print(f"Processing by {group_cols} to avoid crossing trajectory gaps...")
+    
+    segment_groups = df_processed.partition_by(group_cols, as_dict=True)
 
-    for mmsi, vessel_data in tqdm(vessel_groups.items(), desc="Processing vessels"):
+    for group_key, vessel_data in tqdm(segment_groups.items(), desc="Processing segments"):
         n_points = len(vessel_data)
 
         if n_points < min_length:
@@ -194,6 +207,8 @@ def create_sequences_with_features(df, input_hours, output_hours, sampling_rate)
 
         data_array = vessel_data.select(enhanced_features).to_numpy()
         lat_lon = vessel_data.select(["Latitude", "Longitude"]).to_numpy()
+        
+        mmsi = group_key[0] if isinstance(group_key, tuple) else group_key
 
         for i in range(0, n_points - min_length + 1, stride):
             input_seq = data_array[i : i + input_timesteps]
@@ -202,7 +217,7 @@ def create_sequences_with_features(df, input_hours, output_hours, sampling_rate)
             if not (np.isnan(input_seq).any() or np.isnan(output_seq).any()):
                 sequences.append(input_seq)
                 targets.append(output_seq.flatten())
-                mmsi_labels.append(mmsi[0])
+                mmsi_labels.append(mmsi)
 
     sequences = np.array(sequences)
     targets = np.array(targets)

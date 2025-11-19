@@ -26,7 +26,7 @@ SEGMENT_TIME_GAP = 15 * 60  # Maximum time gap before creating new segment (15 m
 KNOTS_TO_MS = 0.514444  # Conversion factor from knots to m/s
 
 # Point-to-point speed validation
-MAX_POINT_TO_POINT_SPEED_KMH = 110  # Maximum realistic speed between consecutive points
+MAX_POINT_TO_POINT_SPEED_KMH = 50  # Maximum realistic speed between consecutive points
 SPEED_ANOMALY_ACTION = (
     "drop"  # Options: "drop" (remove violating point), "drop_both" (remove both points in pair), "keep" (no filtering)
 )

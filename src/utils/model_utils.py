@@ -84,20 +84,29 @@ def load_trajectory_data(data_dir, parquet_files):
             raise FileNotFoundError(f"Parquet file not found: {parquet_path}")
 
     dfs = []
-    for parquet_path in parquet_paths:
+    for idx, parquet_path in enumerate(parquet_paths):
         print(f"  Loading {parquet_path.name}...")
         df_temp = pl.read_parquet(parquet_path)
+        df_temp = df_temp.with_columns(pl.lit(idx).alias("FileIndex"))
         dfs.append(df_temp)
 
     df = pl.concat(dfs, how="vertical")
 
     print(f"Total rows: {len(df):,}")
     print(f"Unique vessels (MMSI): {df['MMSI'].n_unique()}")
+    
+    required_cols = ["MMSI", "Latitude", "Longitude", "SOG", "COG", "Segment", "Timestamp"]
+    missing = [col for col in required_cols if col not in df.columns]
+    assert len(missing) == 0, f"Missing required columns: {missing}"
+    assert df["Segment"].is_not_null().all(), "Segment contains null values"
+    assert df["Timestamp"].is_not_null().all(), "Timestamp contains null values"
 
     df = df.sort(["MMSI", "Timestamp"])
 
     if df["Timestamp"].dtype != pl.Datetime:
         df = df.with_columns(pl.col("Timestamp").cast(pl.Datetime))
+    
+    assert df["Timestamp"].dtype == pl.Datetime, "Timestamp must be datetime type"
 
     return df
 
@@ -118,18 +127,22 @@ def create_prediction_sequences(df, config, n_vessels=None):
     print(f"  Sampling rate: {sampling_rate} minutes")
 
     base_features = ["Latitude", "Longitude", "SOG", "COG"]
+    
+    agg_cols = [
+        pl.col("Latitude").first(),
+        pl.col("Longitude").first(),
+        pl.col("SOG").first(),
+        pl.col("COG").first(),
+        pl.col("Segment").first(),
+    ]
+    
+    if "FileIndex" in df.columns:
+        agg_cols.append(pl.col("FileIndex").first())
 
     df_processed = (
         df.sort(["MMSI", "Timestamp"])
         .group_by_dynamic("Timestamp", every=f"{sampling_rate}m", group_by="MMSI")
-        .agg(
-            [
-                pl.col("Latitude").first(),
-                pl.col("Longitude").first(),
-                pl.col("SOG").first(),
-                pl.col("COG").first(),
-            ]
-        )
+        .agg(agg_cols)
         .drop_nulls(subset=base_features)
     )
 
@@ -163,7 +176,14 @@ def create_prediction_sequences(df, config, n_vessels=None):
             ]
         )
 
-    vessel_groups = df_processed.partition_by("MMSI", as_dict=True)
+    group_cols = ["MMSI", "Segment"]
+    if "FileIndex" in df_processed.columns:
+        group_cols.insert(1, "FileIndex")
+        print(f"  Processing by {group_cols} to avoid crossing trajectory gaps and date boundaries...")
+    else:
+        print(f"  Processing by {group_cols} to avoid crossing trajectory gaps...")
+    
+    segment_groups = df_processed.partition_by(group_cols, as_dict=True)
 
     sequences = []
     targets = []
@@ -172,7 +192,7 @@ def create_prediction_sequences(df, config, n_vessels=None):
     timestamps_list = []
 
     count = 0
-    for mmsi, vessel_data in vessel_groups.items():
+    for group_key, vessel_data in segment_groups.items():
         n_points = len(vessel_data)
 
         if n_points < min_length:
@@ -181,6 +201,8 @@ def create_prediction_sequences(df, config, n_vessels=None):
         data_array = vessel_data.select(feature_cols).to_numpy()
         lat_lon = vessel_data.select(["Latitude", "Longitude"]).to_numpy()
         timestamps = vessel_data.select("Timestamp").to_numpy().flatten()
+        
+        mmsi = group_key[0] if isinstance(group_key, tuple) else group_key
 
         input_seq = data_array[0:input_timesteps]
         output_seq = lat_lon[input_timesteps : input_timesteps + output_timesteps]
@@ -190,7 +212,7 @@ def create_prediction_sequences(df, config, n_vessels=None):
         if not (np.isnan(input_seq).any() or np.isnan(output_seq).any()):
             sequences.append(input_seq)
             targets.append(output_seq.flatten())
-            mmsi_list.append(mmsi[0])
+            mmsi_list.append(mmsi)
             full_trajectories.append(full_traj)
             timestamps_list.append(traj_timestamps)
             count += 1
