@@ -96,7 +96,8 @@ def create_sequences(df, input_hours, output_hours, sampling_rate):
     targets = []
     mmsi_labels = []
 
-    print("Creating sliding windows...")
+    stride = output_timesteps
+    print(f"Creating sequences with stride={stride}")
     vessel_groups = df_processed.partition_by("MMSI", as_dict=True)
 
     for mmsi, vessel_data in tqdm(vessel_groups.items(), desc="Processing vessels"):
@@ -108,7 +109,7 @@ def create_sequences(df, input_hours, output_hours, sampling_rate):
         data_array = vessel_data.select(feature_cols).to_numpy()
         lat_lon = vessel_data.select(["Latitude", "Longitude"]).to_numpy()
 
-        for i in range(n_points - min_length + 1):
+        for i in range(0, n_points - min_length + 1, stride):
             input_seq = data_array[i : i + input_timesteps]
             output_seq = lat_lon[i + input_timesteps : i + input_timesteps + output_timesteps]
 
@@ -122,6 +123,9 @@ def create_sequences(df, input_hours, output_hours, sampling_rate):
     mmsi_labels = np.array(mmsi_labels)
 
     print(f"Created {len(sequences)} sequences from {len(np.unique(mmsi_labels))} unique vessels")
+    print(f"  Stride: {stride} timesteps ({stride * sampling_rate} minutes)")
+    overlap_pct = max(0, (input_timesteps - stride) / input_timesteps * 100)
+    print(f"  Sequence overlap: ~{overlap_pct:.1f}%")
 
     return sequences, targets, mmsi_labels, feature_cols
 
@@ -178,7 +182,8 @@ def create_sequences_with_features(df, input_hours, output_hours, sampling_rate)
     targets = []
     mmsi_labels = []
 
-    print("Creating sliding windows...")
+    stride = output_timesteps
+    print(f"Creating sequences with stride={stride}")
     vessel_groups = df_processed.partition_by("MMSI", as_dict=True)
 
     for mmsi, vessel_data in tqdm(vessel_groups.items(), desc="Processing vessels"):
@@ -190,7 +195,7 @@ def create_sequences_with_features(df, input_hours, output_hours, sampling_rate)
         data_array = vessel_data.select(enhanced_features).to_numpy()
         lat_lon = vessel_data.select(["Latitude", "Longitude"]).to_numpy()
 
-        for i in range(n_points - min_length + 1):
+        for i in range(0, n_points - min_length + 1, stride):
             input_seq = data_array[i : i + input_timesteps]
             output_seq = lat_lon[i + input_timesteps : i + input_timesteps + output_timesteps]
 
@@ -204,8 +209,11 @@ def create_sequences_with_features(df, input_hours, output_hours, sampling_rate)
     mmsi_labels = np.array(mmsi_labels)
 
     print(f"Created {len(sequences)} sequences from {len(np.unique(mmsi_labels))} unique vessels")
-    print(f"Input shape: {sequences.shape}")
-    print(f"Target shape: {targets.shape}")
+    print(f"  Input shape: {sequences.shape}")
+    print(f"  Target shape: {targets.shape}")
+    print(f"  Stride: {stride} timesteps ({stride * sampling_rate} minutes)")
+    overlap_pct = max(0, (input_timesteps - stride) / input_timesteps * 100)
+    print(f"  Sequence overlap: ~{overlap_pct:.1f}%")
 
     return sequences, targets, mmsi_labels, enhanced_features
 
