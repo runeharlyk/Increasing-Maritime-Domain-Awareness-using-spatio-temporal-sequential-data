@@ -210,59 +210,89 @@ def create_sequences_with_features(df, input_hours, output_hours, sampling_rate)
     return sequences, targets, mmsi_labels, enhanced_features
 
 
-def split_by_vessel(sequences, targets, mmsi_labels, train_ratio=0.8, random_seed=42):
+def split_by_vessel(sequences, targets, mmsi_labels, train_ratio=0.7, val_ratio=0.15, random_seed=42):
     unique_mmsi = np.unique(mmsi_labels)
     n_vessels = len(unique_mmsi)
 
     np.random.seed(random_seed)
     shuffled_mmsi = np.random.permutation(unique_mmsi)
 
-    split_idx = int(train_ratio * n_vessels)
-    train_mmsi = set(shuffled_mmsi[:split_idx])
-    test_mmsi = set(shuffled_mmsi[split_idx:])
+    train_end = int(train_ratio * n_vessels)
+    val_end = int((train_ratio + val_ratio) * n_vessels)
+    
+    train_mmsi = set(shuffled_mmsi[:train_end])
+    val_mmsi = set(shuffled_mmsi[train_end:val_end])
+    test_mmsi = set(shuffled_mmsi[val_end:])
 
     print(f"\nVessel-based split:")
-    print(f"  Train vessels: {len(train_mmsi)}")
-    print(f"  Test vessels: {len(test_mmsi)}")
+    print(f"  Train vessels: {len(train_mmsi)} ({train_ratio*100:.0f}%)")
+    print(f"  Val vessels: {len(val_mmsi)} ({val_ratio*100:.0f}%)")
+    print(f"  Test vessels: {len(test_mmsi)} ({(1-train_ratio-val_ratio)*100:.0f}%)")
 
     train_mask = np.array([mmsi in train_mmsi for mmsi in mmsi_labels])
+    val_mask = np.array([mmsi in val_mmsi for mmsi in mmsi_labels])
     test_mask = np.array([mmsi in test_mmsi for mmsi in mmsi_labels])
 
     X_train = sequences[train_mask]
+    X_val = sequences[val_mask]
     X_test = sequences[test_mask]
     y_train = targets[train_mask]
+    y_val = targets[val_mask]
     y_test = targets[test_mask]
 
     print(f"  Train sequences: {len(X_train)}")
+    print(f"  Val sequences: {len(X_val)}")
     print(f"  Test sequences: {len(X_test)}")
 
     train_vessels_in_data = set(mmsi_labels[train_mask])
+    val_vessels_in_data = set(mmsi_labels[val_mask])
     test_vessels_in_data = set(mmsi_labels[test_mask])
-    overlap = train_vessels_in_data & test_vessels_in_data
+    
+    overlap_train_val = train_vessels_in_data & val_vessels_in_data
+    overlap_train_test = train_vessels_in_data & test_vessels_in_data
+    overlap_val_test = val_vessels_in_data & test_vessels_in_data
 
-    if overlap:
-        print(f"  ⚠️  WARNING: {len(overlap)} vessels appear in both sets!")
+    if overlap_train_val or overlap_train_test or overlap_val_test:
+        print(f"  ⚠️  WARNING: Vessel overlap detected!")
+        if overlap_train_val:
+            print(f"    Train-Val overlap: {len(overlap_train_val)} vessels")
+        if overlap_train_test:
+            print(f"    Train-Test overlap: {len(overlap_train_test)} vessels")
+        if overlap_val_test:
+            print(f"    Val-Test overlap: {len(overlap_val_test)} vessels")
     else:
         print(f"  ✅ No vessel overlap - proper split confirmed!")
 
-    return X_train, X_test, y_train, y_test
+    return X_train, X_val, X_test, y_train, y_val, y_test
 
 
-def normalize_data(X_train, X_test, y_train, y_test):
+def normalize_data(X_train, X_val, X_test, y_train, y_val, y_test):
     print("\nNormalizing data...")
-
+    
     input_scaler = StandardScaler()
     n_samples, n_timesteps, n_features = X_train.shape
+    
     X_train_reshaped = X_train.reshape(-1, n_features)
-    X_train_scaled = input_scaler.fit_transform(X_train_reshaped)
-    X_train_scaled = X_train_scaled.reshape(n_samples, n_timesteps, n_features)
-
+    input_scaler.fit(X_train_reshaped)
+    
+    X_train_scaled = input_scaler.transform(X_train_reshaped).reshape(n_samples, n_timesteps, n_features)
+    
+    X_val_reshaped = X_val.reshape(-1, n_features)
+    X_val_scaled = input_scaler.transform(X_val_reshaped).reshape(X_val.shape[0], n_timesteps, n_features)
+    
     X_test_reshaped = X_test.reshape(-1, n_features)
-    X_test_scaled = input_scaler.transform(X_test_reshaped)
-    X_test_scaled = X_test_scaled.reshape(X_test.shape[0], n_timesteps, n_features)
+    X_test_scaled = input_scaler.transform(X_test_reshaped).reshape(X_test.shape[0], n_timesteps, n_features)
 
     output_scaler = StandardScaler()
-    y_train_scaled = output_scaler.fit_transform(y_train)
+    output_scaler.fit(y_train)
+    y_train_scaled = output_scaler.transform(y_train)
+    y_val_scaled = output_scaler.transform(y_val)
     y_test_scaled = output_scaler.transform(y_test)
+    
+    print(f"  Input features: {n_features}")
+    print(f"  Input scaler - mean range: [{input_scaler.mean_.min():.3f}, {input_scaler.mean_.max():.3f}]")
+    print(f"  Input scaler - scale range: [{input_scaler.scale_.min():.3f}, {input_scaler.scale_.max():.3f}]")
+    print(f"  Output scaler - mean: {output_scaler.mean_}")
+    print(f"  Output scaler - scale: {output_scaler.scale_}")
 
-    return X_train_scaled, X_test_scaled, y_train_scaled, y_test_scaled, input_scaler, output_scaler
+    return X_train_scaled, X_val_scaled, X_test_scaled, y_train_scaled, y_val_scaled, y_test_scaled, input_scaler, output_scaler

@@ -50,6 +50,9 @@ wandb.init(
         "early_stop_patience": 20,
         "model": "EncoderDecoderGRU",
         "device": str(DEVICE),
+        "train_ratio": 0.7,
+        "val_ratio": 0.15,
+        "test_ratio": 0.15,
     },
 )
 
@@ -60,14 +63,20 @@ sequences, targets, mmsi_labels, feature_cols = create_sequences_with_features(
     df, INPUT_HOURS, OUTPUT_HOURS, SAMPLING_RATE
 )
 
-X_train, X_test, y_train, y_test = split_by_vessel(sequences, targets, mmsi_labels, train_ratio=0.8)
+X_train, X_val, X_test, y_train, y_val, y_test = split_by_vessel(
+    sequences, targets, mmsi_labels, train_ratio=0.7, val_ratio=0.15, random_seed=42
+)
 
-X_train, X_test, y_train, y_test, input_scaler, output_scaler = normalize_data(X_train, X_test, y_train, y_test)
+X_train, X_val, X_test, y_train, y_val, y_test, input_scaler, output_scaler = normalize_data(
+    X_train, X_val, X_test, y_train, y_val, y_test
+)
 
 train_dataset = TrajectoryDataset(X_train, y_train)
+val_dataset = TrajectoryDataset(X_val, y_val)
 test_dataset = TrajectoryDataset(X_test, y_test)
 
 train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=8)
+val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=8)
 test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=8)
 
 input_size = len(feature_cols)
@@ -91,7 +100,7 @@ print(f"\nTotal parameters: {total_params:,}")
 wandb.config.update({"input_size": input_size, "total_parameters": total_params})
 wandb.watch(model, log="all", log_freq=100)
 
-criterion = HaversineLoss(output_scaler)
+criterion = HaversineLoss(output_scaler).to(DEVICE)
 optimizer = torch.optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-5)
 scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=10)
 
@@ -152,7 +161,7 @@ early_stop_patience = 20
 
 for epoch in range(EPOCHS):
     train_loss = train_model(model, train_loader, criterion, optimizer, DEVICE, epoch, EPOCHS)
-    val_loss = evaluate_model(model, test_loader, criterion, DEVICE)
+    val_loss = evaluate_model(model, val_loader, criterion, DEVICE)
 
     train_losses.append(train_loss)
     val_losses.append(val_loss)
@@ -160,7 +169,6 @@ for epoch in range(EPOCHS):
     scheduler.step(val_loss)
     current_lr = optimizer.param_groups[0]["lr"]
 
-    # Log metrics to wandb
     wandb.log(
         {
             "epoch": epoch + 1,
@@ -209,7 +217,28 @@ for epoch in range(EPOCHS):
 
 print(f"\nTraining complete! Best validation loss: {best_val_loss:.6f}")
 
-# Log final summary and finish wandb run
+print("\n" + "="*50)
+print("FINAL EVALUATION ON TEST SET")
+print("="*50)
+
+checkpoint = torch.load("best_model_encoder_decoder.pt", weights_only=False)
+model.load_state_dict(checkpoint["model_state_dict"])
+test_loss = evaluate_model(model, test_loader, criterion, DEVICE)
+print(f"Final Test Loss: {test_loss:.6f}")
+
 wandb.summary["best_val_loss"] = best_val_loss
+wandb.summary["test_loss"] = test_loss
 wandb.summary["total_epochs_trained"] = epoch + 1
+
+wandb.log({
+    "final/test_loss": test_loss,
+    "final/val_loss": best_val_loss,
+    "final/train_loss": train_losses[-1] if train_losses else 0
+})
+
+print(f"\nFinal Results:")
+print(f"  Best Validation Loss: {best_val_loss:.6f}")
+print(f"  Final Test Loss: {test_loss:.6f}")
+print(f"  Total Epochs: {epoch + 1}")
+
 wandb.finish()
