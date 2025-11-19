@@ -13,7 +13,7 @@ from src.data.preprocessing import (
     normalize_data,
 )
 from src.models import TrajectoryDataset, EncoderDecoderGRU
-from src.utils.model_utils import HaversineLoss
+from src.utils.model_utils import HaversineLoss, train_model, evaluate_model
 from src.utils import set_seed
 
 set_seed(42)
@@ -48,6 +48,8 @@ wandb.init(
         "dropout": 0.3,
         "weight_decay": 1e-5,
         "early_stop_patience": 20,
+        "teacher_forcing_start": 1.0,
+        "teacher_forcing_end": 0.2,
         "model": "EncoderDecoderGRU",
         "device": str(DEVICE),
         "train_ratio": 0.7,
@@ -105,53 +107,6 @@ optimizer = torch.optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay
 scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=10)
 
 
-def train_model(model, train_loader, criterion, optimizer, device, epoch, total_epochs):
-    """Train the model for one epoch."""
-    model.train()
-    total_loss = 0
-
-    teacher_forcing_ratio = max(0.5 * (1 - epoch / total_epochs), 0.0)
-
-    for sequences, targets in train_loader:
-        sequences = sequences.to(device)
-        targets = targets.to(device)
-
-        optimizer.zero_grad()
-
-        output_timesteps = targets.shape[1] // 2
-        target_seq = targets.reshape(targets.shape[0], output_timesteps, 2)
-
-        outputs = model(sequences, target_seq, teacher_forcing_ratio)
-
-        loss = criterion(outputs, targets)
-        loss.backward()
-
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-
-        optimizer.step()
-        total_loss += loss.item()
-
-    return total_loss / len(train_loader)
-
-
-def evaluate_model(model, test_loader, criterion, device):
-    """Evaluate the model."""
-    model.eval()
-    total_loss = 0
-
-    with torch.no_grad():
-        for sequences, targets in test_loader:
-            sequences = sequences.to(device)
-            targets = targets.to(device)
-
-            outputs = model(sequences, target_seq=None, teacher_forcing_ratio=0.0)
-
-            loss = criterion(outputs, targets)
-            total_loss += loss.item()
-
-    return total_loss / len(test_loader)
-
-
 print(f"\nStarting training for {EPOCHS} epochs...")
 train_losses = []
 val_losses = []
@@ -160,7 +115,9 @@ patience_counter = 0
 early_stop_patience = 20
 
 for epoch in range(EPOCHS):
-    train_loss = train_model(model, train_loader, criterion, optimizer, DEVICE, epoch, EPOCHS)
+    teacher_forcing_ratio = max(0.2, 1.0 - (0.8 * (epoch / EPOCHS)))
+
+    train_loss = train_model(model, train_loader, criterion, optimizer, DEVICE, epoch, EPOCHS, teacher_forcing_ratio)
     val_loss = evaluate_model(model, val_loader, criterion, DEVICE)
 
     train_losses.append(train_loss)
@@ -175,10 +132,15 @@ for epoch in range(EPOCHS):
             "train_loss": train_loss,
             "val_loss": val_loss,
             "learning_rate": current_lr,
+            "teacher_forcing_ratio": teacher_forcing_ratio,
         }
     )
 
-    print(f"Epoch [{epoch+1}/{EPOCHS}] - " f"Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}")
+    print(
+        f"Epoch [{epoch+1}/{EPOCHS}] - "
+        f"Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}, "
+        f"Teacher Forcing: {teacher_forcing_ratio:.3f}, LR: {current_lr:.6f}"
+    )
 
     if val_loss < best_val_loss:
         best_val_loss = val_loss
@@ -217,9 +179,9 @@ for epoch in range(EPOCHS):
 
 print(f"\nTraining complete! Best validation loss: {best_val_loss:.6f}")
 
-print("\n" + "="*50)
+print("\n" + "=" * 50)
 print("FINAL EVALUATION ON TEST SET")
-print("="*50)
+print("=" * 50)
 
 checkpoint = torch.load("best_model_encoder_decoder.pt", weights_only=False)
 model.load_state_dict(checkpoint["model_state_dict"])
@@ -230,11 +192,13 @@ wandb.summary["best_val_loss"] = best_val_loss
 wandb.summary["test_loss"] = test_loss
 wandb.summary["total_epochs_trained"] = epoch + 1
 
-wandb.log({
-    "final/test_loss": test_loss,
-    "final/val_loss": best_val_loss,
-    "final/train_loss": train_losses[-1] if train_losses else 0
-})
+wandb.log(
+    {
+        "final/test_loss": test_loss,
+        "final/val_loss": best_val_loss,
+        "final/train_loss": train_losses[-1] if train_losses else 0,
+    }
+)
 
 print(f"\nFinal Results:")
 print(f"  Best Validation Loss: {best_val_loss:.6f}")

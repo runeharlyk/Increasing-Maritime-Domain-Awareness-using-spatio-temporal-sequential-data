@@ -10,14 +10,13 @@ from src.utils.geo import haversine_distance_torch
 class HaversineLoss(torch.nn.Module):
     def __init__(self, output_scaler):
         super(HaversineLoss, self).__init__()
-        self.output_scaler = output_scaler
-        self.register_buffer('scale_', torch.FloatTensor(output_scaler.scale_))
-        self.register_buffer('mean_', torch.FloatTensor(output_scaler.mean_))
+        self.register_buffer('scale_', torch.tensor(output_scaler.scale_, dtype=torch.float32))
+        self.register_buffer('mean_', torch.tensor(output_scaler.mean_, dtype=torch.float32))
 
     def forward(self, predictions, targets):
         pred_unscaled = predictions * self.scale_ + self.mean_
         target_unscaled = targets * self.scale_ + self.mean_
-        
+
         pred_reshaped = pred_unscaled.reshape(-1, 2)
         target_reshaped = target_unscaled.reshape(-1, 2)
 
@@ -29,6 +28,51 @@ class HaversineLoss(torch.nn.Module):
         distances = haversine_distance_torch(pred_lat, pred_lon, target_lat, target_lon)
 
         return distances.mean()
+
+
+def train_model(model, train_loader, criterion, optimizer, device, epoch, total_epochs, teacher_forcing_ratio=0.5):
+    """Train the model for one epoch."""
+    model.train()
+    total_loss = 0
+
+    for sequences, targets in train_loader:
+        sequences = sequences.to(device)
+        targets = targets.to(device)
+
+        optimizer.zero_grad()
+
+        output_timesteps = targets.shape[1] // 2
+        target_seq = targets.reshape(targets.shape[0], output_timesteps, 2)
+
+        outputs = model(sequences, target_seq, teacher_forcing_ratio)
+
+        loss = criterion(outputs, targets)
+        loss.backward()
+
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+
+        optimizer.step()
+        total_loss += loss.item()
+
+    return total_loss / len(train_loader)
+
+
+def evaluate_model(model, test_loader, criterion, device):
+    """Evaluate the model."""
+    model.eval()
+    total_loss = 0
+
+    with torch.no_grad():
+        for sequences, targets in test_loader:
+            sequences = sequences.to(device)
+            targets = targets.to(device)
+
+            outputs = model(sequences, target_seq=None, teacher_forcing_ratio=0.0)
+
+            loss = criterion(outputs, targets)
+            total_loss += loss.item()
+
+    return total_loss / len(test_loader)
 
 
 def load_model_and_config(model_path, model_class, device="cpu"):
@@ -94,7 +138,7 @@ def load_trajectory_data(data_dir, parquet_files):
 
     print(f"Total rows: {len(df):,}")
     print(f"Unique vessels (MMSI): {df['MMSI'].n_unique()}")
-    
+
     required_cols = ["MMSI", "Latitude", "Longitude", "SOG", "COG", "Segment", "Timestamp"]
     missing = [col for col in required_cols if col not in df.columns]
     assert len(missing) == 0, f"Missing required columns: {missing}"
@@ -105,7 +149,7 @@ def load_trajectory_data(data_dir, parquet_files):
 
     if df["Timestamp"].dtype != pl.Datetime:
         df = df.with_columns(pl.col("Timestamp").cast(pl.Datetime))
-    
+
     assert df["Timestamp"].dtype == pl.Datetime, "Timestamp must be datetime type"
 
     return df
@@ -127,7 +171,7 @@ def create_prediction_sequences(df, config, n_vessels=None):
     print(f"  Sampling rate: {sampling_rate} minutes")
 
     base_features = ["Latitude", "Longitude", "SOG", "COG"]
-    
+
     agg_cols = [
         pl.col("Latitude").first(),
         pl.col("Longitude").first(),
@@ -135,7 +179,7 @@ def create_prediction_sequences(df, config, n_vessels=None):
         pl.col("COG").first(),
         pl.col("Segment").first(),
     ]
-    
+
     if "FileIndex" in df.columns:
         agg_cols.append(pl.col("FileIndex").first())
 
@@ -182,7 +226,7 @@ def create_prediction_sequences(df, config, n_vessels=None):
         print(f"  Processing by {group_cols} to avoid crossing trajectory gaps and date boundaries...")
     else:
         print(f"  Processing by {group_cols} to avoid crossing trajectory gaps...")
-    
+
     segment_groups = df_processed.partition_by(group_cols, as_dict=True)
 
     sequences = []
@@ -201,7 +245,7 @@ def create_prediction_sequences(df, config, n_vessels=None):
         data_array = vessel_data.select(feature_cols).to_numpy()
         lat_lon = vessel_data.select(["Latitude", "Longitude"]).to_numpy()
         timestamps = vessel_data.select("Timestamp").to_numpy().flatten()
-        
+
         mmsi = group_key[0] if isinstance(group_key, tuple) else group_key
 
         input_seq = data_array[0:input_timesteps]
