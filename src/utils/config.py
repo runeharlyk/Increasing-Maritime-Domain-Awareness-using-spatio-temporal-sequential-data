@@ -30,6 +30,25 @@ SPEED_ANOMALY_ACTION = (
     "drop"  # Options: "drop" (remove violating point), "drop_both" (remove both points in pair), "keep" (no filtering)
 )
 
+# Feature Engineering
+FEATURE_COLS = [
+    "Latitude",
+    "Longitude",
+    "SOG",
+    "COG_sin",
+    "COG_cos",
+    "hour_sin",
+    "hour_cos",
+    "day_of_week_sin",
+    "day_of_week_cos",
+    "SOG_diff",
+    "COG_diff_sin",
+    "COG_diff_cos",
+]
+
+# Columns to apply StandardScaler to (others are assumed to be sin/cos or categorical)
+COLS_TO_NORMALIZE = ["Latitude", "Longitude", "SOG", "SOG_diff"]
+
 # Output settings
 OUTPUT_FILE = "filtered_vessels.parquet"
 COMPRESSION = "snappy"

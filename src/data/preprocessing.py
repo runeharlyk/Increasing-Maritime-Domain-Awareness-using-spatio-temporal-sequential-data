@@ -105,7 +105,7 @@ def create_sequences(df, input_hours, output_hours, sampling_rate):
     output_timesteps = int(output_hours * 60 / sampling_rate)
     min_length = input_timesteps + output_timesteps
 
-    feature_cols = ["Latitude", "Longitude", "SOG", "COG"]
+    base_feature_cols = ["Latitude", "Longitude", "SOG", "COG"]
 
     print("Resampling and adding features with Polars...")
 
@@ -124,7 +124,7 @@ def create_sequences(df, input_hours, output_hours, sampling_rate):
         df.sort(["MMSI", "Timestamp"])
         .group_by_dynamic("Timestamp", every=f"{sampling_rate}m", by="MMSI")
         .agg(agg_cols)
-        .drop_nulls(subset=feature_cols)
+        .drop_nulls(subset=base_feature_cols)
         .with_columns(
             [
                 (2 * np.pi * pl.col("Timestamp").dt.hour() / 24.0).sin().alias("hour_sin"),
@@ -155,20 +155,7 @@ def create_sequences(df, input_hours, output_hours, sampling_rate):
         )
     )
 
-    enhanced_features = [
-        "Latitude",
-        "Longitude",
-        "SOG",
-        "COG_sin",
-        "COG_cos",
-        "hour_sin",
-        "hour_cos",
-        "day_of_week_sin",
-        "day_of_week_cos",
-        "SOG_diff",
-        "COG_diff_sin",
-        "COG_diff_cos",
-    ]
+    enhanced_features = config.FEATURE_COLS
 
     sequences = []
     targets = []
@@ -295,12 +282,31 @@ def normalize_data(X_train, X_val, X_test, y_train, y_val, y_test):
     X_val_scaled = X_val.copy()
     X_test_scaled = X_test.copy()
 
-    features_to_normalize = [0, 1, 2, 9]
-    features_not_normalized = [3, 4, 5, 6, 7, 8, 10, 11]
+    feature_cols = config.FEATURE_COLS
+    cols_to_norm = config.COLS_TO_NORMALIZE
+    features_to_normalize = [i for i, col in enumerate(feature_cols) if col in cols_to_norm]
+    features_not_normalized = [i for i in range(n_features) if i not in features_to_normalize]
 
     input_scaler = StandardScaler()
     X_train_norm = X_train[:, :, features_to_normalize].reshape(-1, len(features_to_normalize))
     input_scaler.fit(X_train_norm)
+
+    if feature_cols:
+        lat_col_idx = next((i for i, col in enumerate(feature_cols) if col == "Latitude"), None)
+        lon_col_idx = next((i for i, col in enumerate(feature_cols) if col == "Longitude"), None)
+
+        if lat_col_idx is not None and lon_col_idx is not None and \
+           lat_col_idx in features_to_normalize and lon_col_idx in features_to_normalize:
+            
+            scaler_lat_idx = features_to_normalize.index(lat_col_idx)
+            scaler_lon_idx = features_to_normalize.index(lon_col_idx)
+            
+            max_scale = max(input_scaler.scale_[scaler_lat_idx], input_scaler.scale_[scaler_lon_idx])
+            input_scaler.scale_[scaler_lat_idx] = max_scale
+            input_scaler.scale_[scaler_lon_idx] = max_scale
+            print(f"  Enforcing uniform spatial scaling: {max_scale:.4f}")
+        else:
+            print("  Info: Spatial scaling skipped (Latitude or Longitude not in normalized features).")
 
     X_train_scaled[:, :, features_to_normalize] = input_scaler.transform(X_train_norm).reshape(
         n_samples, n_timesteps, len(features_to_normalize)
@@ -316,6 +322,10 @@ def normalize_data(X_train, X_val, X_test, y_train, y_val, y_test):
     output_timesteps = y_train.shape[1] // 2
     y_train_reshaped = y_train.reshape(-1, 2)
     output_scaler.fit(y_train_reshaped)
+
+    max_scale = max(output_scaler.scale_[0], output_scaler.scale_[1])
+    output_scaler.scale_[0] = max_scale
+    output_scaler.scale_[1] = max_scale
 
     y_train_scaled = output_scaler.transform(y_train_reshaped).reshape(y_train.shape[0], -1)
     y_val_scaled = output_scaler.transform(y_val.reshape(-1, 2)).reshape(y_val.shape[0], -1)

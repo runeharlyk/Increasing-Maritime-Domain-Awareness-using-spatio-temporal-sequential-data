@@ -32,7 +32,8 @@ def haversine_distance_torch(lat1, lon1, lat2, lon2):
     dlon = lon2_rad - lon1_rad
 
     a = torch.sin(dlat / 2) ** 2 + torch.cos(lat1_rad) * torch.cos(lat2_rad) * torch.sin(dlon / 2) ** 2
-    c = 2 * torch.atan2(torch.sqrt(a), torch.sqrt(1 - a))
+    a = torch.clamp(a, 0.0, 1.0) 
+    c = 2 * torch.atan2(torch.sqrt(a), torch.sqrt(1 - a + 1e-7))
 
     distance = R * c
     return distance

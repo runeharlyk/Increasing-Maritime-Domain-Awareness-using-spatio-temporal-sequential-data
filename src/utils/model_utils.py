@@ -301,7 +301,9 @@ def predict_trajectories(model, sequences, input_scaler, output_scaler, device="
     n_samples, n_timesteps, n_features = sequences.shape
     sequences_scaled = sequences.copy()
 
-    features_to_normalize = [0, 1, 2, 9]
+    feature_cols = config.FEATURE_COLS
+    cols_to_norm = config.COLS_TO_NORMALIZE
+    features_to_normalize = [i for i, col in enumerate(feature_cols) if col in cols_to_norm]
 
     sequences_norm = sequences[:, :, features_to_normalize].reshape(-1, len(features_to_normalize))
     sequences_scaled[:, :, features_to_normalize] = input_scaler.transform(sequences_norm).reshape(
