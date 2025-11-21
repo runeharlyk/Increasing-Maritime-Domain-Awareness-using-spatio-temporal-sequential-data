@@ -123,7 +123,9 @@ class EncoderDecoderGRU(nn.Module):
         # Decode
         for t in range(self.output_seq_len):
             decoder_out, hidden = self.decoder(decoder_input, hidden)
-            prediction = self.fc(decoder_out)
+            delta = self.fc(decoder_out)
+            
+            prediction = decoder_input + delta
             outputs.append(prediction)
 
             # Teacher forcing
