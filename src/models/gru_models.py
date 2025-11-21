@@ -125,6 +125,8 @@ class EncoderDecoderGRU(nn.Module):
             decoder_out, hidden = self.decoder(decoder_input, hidden)
             delta = self.fc(decoder_out)
             
+            delta = torch.tanh(delta)
+            
             prediction = decoder_input + delta
             outputs.append(prediction)
 
