@@ -4,8 +4,9 @@ from pathlib import Path
 from sklearn.preprocessing import StandardScaler
 from tqdm import tqdm
 
+from src.utils import config
 
-def merge_cross_file_segments(df, max_time_gap_minutes=30):
+def merge_cross_file_segments(df, max_time_gap_minutes=config.SEGMENT_TIME_GAP / 60):
     print("\nMerging continuous segments across file boundaries...")
 
     df = df.sort(["MMSI", "FileIndex", "Timestamp"])
@@ -57,7 +58,7 @@ def merge_cross_file_segments(df, max_time_gap_minutes=30):
     return df
 
 
-def load_and_prepare_data(data_dir, max_time_gap_minutes=30):
+def load_and_prepare_data(data_dir, max_time_gap_minutes=config.SEGMENT_TIME_GAP / 60):
     print("Loading data...")
 
     data_dir = Path(data_dir)
