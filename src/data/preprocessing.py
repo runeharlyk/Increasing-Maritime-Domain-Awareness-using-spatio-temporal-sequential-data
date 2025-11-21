@@ -318,6 +318,11 @@ def normalize_data(X_train, X_val, X_test, y_train, y_val, y_test):
         X_test[:, :, features_to_normalize].reshape(-1, len(features_to_normalize))
     ).reshape(X_test.shape[0], n_timesteps, len(features_to_normalize))
 
+    clip_value = 5.0
+    X_train_scaled = np.clip(X_train_scaled, -clip_value, clip_value)
+    X_val_scaled = np.clip(X_val_scaled, -clip_value, clip_value)
+    X_test_scaled = np.clip(X_test_scaled, -clip_value, clip_value)
+
     output_scaler = StandardScaler()
     output_timesteps = y_train.shape[1] // 2
     y_train_reshaped = y_train.reshape(-1, 2)
@@ -331,6 +336,28 @@ def normalize_data(X_train, X_val, X_test, y_train, y_val, y_test):
     y_val_scaled = output_scaler.transform(y_val.reshape(-1, 2)).reshape(y_val.shape[0], -1)
     y_test_scaled = output_scaler.transform(y_test.reshape(-1, 2)).reshape(y_test.shape[0], -1)
 
+    y_train_scaled = np.clip(y_train_scaled, -clip_value, clip_value)
+    y_val_scaled = np.clip(y_val_scaled, -clip_value, clip_value)
+    y_test_scaled = np.clip(y_test_scaled, -clip_value, clip_value)
+
+    assert not np.isnan(X_train_scaled).any(), "NaN detected in X_train_scaled"
+    assert not np.isnan(X_val_scaled).any(), "NaN detected in X_val_scaled"
+    assert not np.isnan(X_test_scaled).any(), "NaN detected in X_test_scaled"
+    assert not np.isnan(y_train_scaled).any(), "NaN detected in y_train_scaled"
+    assert not np.isnan(y_val_scaled).any(), "NaN detected in y_val_scaled"
+    assert not np.isnan(y_test_scaled).any(), "NaN detected in y_test_scaled"
+    assert not np.isinf(X_train_scaled).any(), "Inf detected in X_train_scaled"
+    assert not np.isinf(y_train_scaled).any(), "Inf detected in y_train_scaled"
+    
+    print(f"  ✅ Data validation passed: No NaNs or Infs detected")
+    print(f"  X_train_scaled range: [{X_train_scaled.min():.2f}, {X_train_scaled.max():.2f}]")
+    print(f"  y_train_scaled range: [{y_train_scaled.min():.2f}, {y_train_scaled.max():.2f}]")
+    
+    # Check for extreme outliers (values beyond ±10 sigma are suspicious)
+    if np.abs(X_train_scaled).max() > 10:
+        print(f"  ⚠️  WARNING: Extreme outliers detected in X_train_scaled (max abs value: {np.abs(X_train_scaled).max():.2f})")
+        print(f"     This may cause training instability. Consider clipping outliers.")
+    
     print(f"  Input features: {n_features}")
     print(f"  Features normalized (Lat, Lon, SOG, SOG_diff): {features_to_normalize}")
     print(f"  Features NOT normalized (sin/cos): {features_not_normalized}")

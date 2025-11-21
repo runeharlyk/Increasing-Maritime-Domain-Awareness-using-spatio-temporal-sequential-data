@@ -112,27 +112,43 @@ class EncoderDecoderGRU(nn.Module):
     def forward(self, x, target_seq=None, teacher_forcing_ratio=0.5):
         batch_size = x.size(0)
 
-        # Encode
         encoder_out, hidden = self.encoder(x)
+        
+        if torch.isnan(hidden).any():
+            print(f"NaN in encoder hidden state!")
+            print(f"  Input x range: [{x.min():.2f}, {x.max():.2f}]")
+            raise ValueError("NaN in encoder hidden")
+        
+        hidden = torch.clamp(hidden, -10.0, 10.0)
 
         outputs = []
 
-        # Initialize decoder input with last input position
         decoder_input = x[:, -1, :2].unsqueeze(1)
+        decoder_input = torch.clamp(decoder_input, -5.0, 5.0)
 
-        # Decode
         for t in range(self.output_seq_len):
             decoder_out, hidden = self.decoder(decoder_input, hidden)
-            delta = self.fc(decoder_out)
             
+            if torch.isnan(decoder_out).any() or torch.isnan(hidden).any():
+                print(f"NaN in decoder at timestep {t}")
+                print(f"  decoder_input range: [{decoder_input.min():.2f}, {decoder_input.max():.2f}]")
+                print(f"  decoder_out has NaN: {torch.isnan(decoder_out).any()}")
+                print(f"  hidden has NaN: {torch.isnan(hidden).any()}")
+                raise ValueError(f"NaN in decoder at timestep {t}")
+            
+            hidden = torch.clamp(hidden, -10.0, 10.0)
+            
+            delta = self.fc(decoder_out)
             delta = torch.tanh(delta)
             
             prediction = decoder_input + delta
+            prediction = torch.clamp(prediction, -5.0, 5.0)
+            
             outputs.append(prediction)
 
-            # Teacher forcing
             if target_seq is not None and torch.rand(1).item() < teacher_forcing_ratio:
                 decoder_input = target_seq[:, t: t + 1, :]
+                decoder_input = torch.clamp(decoder_input, -5.0, 5.0)
             else:
                 decoder_input = prediction
 

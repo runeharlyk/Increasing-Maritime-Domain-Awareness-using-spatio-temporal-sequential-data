@@ -20,22 +20,30 @@ class HaversineLoss(torch.nn.Module):
         pred_unscaled = pred_reshaped * self.scale_ + self.mean_
         target_unscaled = target_reshaped * self.scale_ + self.mean_
 
-        pred_lat = pred_unscaled[:, 0]
-        pred_lon = pred_unscaled[:, 1]
-        target_lat = target_unscaled[:, 0]
-        target_lon = target_unscaled[:, 1]
+        pred_lat = torch.clamp(pred_unscaled[:, 0], -90.0, 90.0)
+        pred_lon = torch.clamp(pred_unscaled[:, 1], -180.0, 180.0)
+        target_lat = torch.clamp(target_unscaled[:, 0], -90.0, 90.0)
+        target_lon = torch.clamp(target_unscaled[:, 1], -180.0, 180.0)
 
         distances = haversine_distance_torch(pred_lat, pred_lon, target_lat, target_lon)
+
+        if torch.isnan(distances).any():
+            print(f"NaN detected in distances!")
+            print(f"  pred_lat range: [{pred_lat.min():.2f}, {pred_lat.max():.2f}]")
+            print(f"  pred_lon range: [{pred_lon.min():.2f}, {pred_lon.max():.2f}]")
+            print(f"  target_lat range: [{target_lat.min():.2f}, {target_lat.max():.2f}]")
+            print(f"  target_lon range: [{target_lon.min():.2f}, {target_lon.max():.2f}]")
+            print(f"  pred_unscaled (before clamp) range: [{pred_unscaled.min():.2f}, {pred_unscaled.max():.2f}]")
+            print(f"  predictions (normalized) range: [{predictions.min():.2f}, {predictions.max():.2f}]")
 
         return distances.mean()
 
 
 def train_model(model, train_loader, criterion, optimizer, device, epoch, total_epochs, teacher_forcing_ratio=0.5):
-    """Train the model for one epoch."""
     model.train()
     total_loss = 0
 
-    for sequences, targets in train_loader:
+    for batch_idx, (sequences, targets) in enumerate(train_loader):
         sequences = sequences.to(device)
         targets = targets.to(device)
 
@@ -46,7 +54,19 @@ def train_model(model, train_loader, criterion, optimizer, device, epoch, total_
 
         outputs = model(sequences, target_seq, teacher_forcing_ratio)
 
+        if torch.isnan(outputs).any():
+            print(f"NaN detected in model outputs at epoch {epoch+1}, batch {batch_idx}")
+            print(f"  outputs range: [{outputs.min():.2f}, {outputs.max():.2f}]")
+            print(f"  sequences range: [{sequences.min():.2f}, {sequences.max():.2f}]")
+            print(f"  Teacher forcing ratio: {teacher_forcing_ratio:.3f}")
+            raise ValueError("NaN in model outputs")
+
         loss = criterion(outputs, targets)
+
+        if torch.isnan(loss):
+            print(f"NaN loss at epoch {epoch+1}, batch {batch_idx}")
+            raise ValueError("NaN loss detected")
+
         loss.backward()
 
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
