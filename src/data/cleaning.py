@@ -13,12 +13,23 @@ def clean_dataframe(df):
     if df.is_empty():
         return df
 
-    print(f"  Initial rows: {len(df)}")
+    print(f"  Initial rows: {df.height}")
+
+    print("  Filtering by ship type...")
+    before = df.height
+    df = df.filter(pl.col("Ship type").is_in(config.SHIP_TYPES))
+    print(f"  Kept {'/'.join(config.SHIP_TYPES)} only. Removed {before - df.height} rows. Rows now: {df.height}")
+
+    # Filter by vessel class
+    print("  Filtering by vessel class...")
+    before = df.height
+    df = df.filter(pl.col("Type of mobile").is_in(config.VESSEL_CLASSES))
+    print(f"  Kept {'/'.join(config.VESSEL_CLASSES)} vessels. Rows now: {df.height}")
 
     # Apply bounding box filter
     print("  Applying geographic bounding box filter...")
     north, west, south, east = config.BOUNDING_BOX
-    before = len(df)
+    before = df.height
     df = df.filter(
         (pl.col("Latitude") <= north)
         & (pl.col("Latitude") >= south)
@@ -26,24 +37,20 @@ def clean_dataframe(df):
         & (pl.col("Longitude") <= east)
     )
     print(f"  Removed {before - len(df)} rows outside bounding box. Rows now: {len(df)}")
-
-    # Filter by vessel class
-    print("  Filtering by vessel class...")
-    before = len(df)
-    df = df.filter(pl.col("Type of mobile").is_in(config.VESSEL_CLASSES))
-    print(f"  Kept {'/'.join(config.VESSEL_CLASSES)} vessels. Rows now: {len(df)}")
+    print(f"  Removed {before - df.height} rows outside bounding box. Rows now: {df.height}")
 
     # MMSI format validation
     print("  Validating MMSI format...")
-    before = len(df)
-    df = df.filter(pl.col("MMSI").str.len_chars() == config.MMSI_LENGTH)
-    df = df.filter(pl.col("MMSI").str.slice(0, 3).cast(pl.Int32).is_between(config.MMSI_MID_MIN, config.MMSI_MID_MAX))
-    print(f"  Removed {before - len(df)} rows with invalid MMSI. Rows now: {len(df)}")
+    before = df.height
+    df = df.filter(
+        (pl.col("MMSI").str.len_chars() == config.MMSI_LENGTH)
+        & (pl.col("MMSI").str.slice(0, 3).cast(pl.Int32).is_between(config.MMSI_MID_MIN, config.MMSI_MID_MAX))
+    )
+    print(f"  Removed {before - df.height} rows with invalid MMSI. Rows now: {df.height}")
 
     # Parse timestamp
     print("  Parsing timestamps...")
-    if "# Timestamp" in df.columns:
-        df = df.rename({"# Timestamp": "Timestamp"})
+    df = df.rename({"# Timestamp": "Timestamp"})
     df = df.with_columns(
         pl.col("Timestamp").str.to_datetime(format="%d/%m/%Y %H:%M:%S", strict=False).alias("Timestamp")
     )
@@ -55,15 +62,15 @@ def clean_dataframe(df):
 
     # Remove duplicates
     print("  Removing duplicates...")
-    before = len(df)
+    before = df.height
     df = df.unique(subset=["Timestamp", "MMSI"], keep="first")
-    print(f"  Removed {before - len(df)} duplicate rows. Rows now: {len(df)}")
+    print(f"  Removed {before - df.height} duplicate rows. Rows now: {df.height}")
 
     # Apply track filtering
     print(
         f"  Applying track filtering (length > {config.TRACK_MIN_LENGTH}, SOG {config.TRACK_MIN_SOG}-{config.TRACK_MAX_SOG} knots, timespan >= {config.TRACK_MIN_TIMESPAN/3600:.0f} hour)..."
     )
-    before = len(df)
+    before = df.height
     unique_before = df["MMSI"].n_unique()
     track_stats = df.group_by("MMSI").agg(
         [
@@ -78,9 +85,8 @@ def clean_dataframe(df):
         & (pl.col("max_sog") <= config.TRACK_MAX_SOG)
         & (pl.col("timespan_seconds") >= config.TRACK_MIN_TIMESPAN)
     ).select("MMSI")
-    df = df.join(valid_tracks, on="MMSI", how="inner")
-    df = df.sort(["MMSI", "Timestamp"])
-    print(f"  Removed {before - len(df)} rows from invalid tracks. Rows now: {len(df)}")
+    df = df.join(valid_tracks, on="MMSI", how="inner").sort(["MMSI", "Timestamp"])
+    print(f"  Removed {before - df.height} rows from invalid tracks. Rows now: {df.height}")
     print(f"  Unique vessels: {unique_before} -> {df['MMSI'].n_unique()}")
 
     # Create segments based on time gaps
@@ -109,7 +115,7 @@ def clean_dataframe(df):
 
     # Apply segment filtering
     print("  Applying segment filtering...")
-    before = len(df)
+    before = df.height
     segment_stats = df.group_by(["MMSI", "Segment"]).agg(
         [
             pl.len().alias("count"),
@@ -124,14 +130,14 @@ def clean_dataframe(df):
         & (pl.col("timespan_seconds") >= config.TRACK_MIN_TIMESPAN)
     ).select(["MMSI", "Segment"])
     df = df.join(valid_segments, on=["MMSI", "Segment"], how="inner")
-    print(f"  Removed {before - len(df)} rows from invalid segments. Rows now: {len(df)}")
+    print(f"  Removed {before - df.height} rows from invalid segments. Rows now: {df.height}")
 
     # Filter by point-to-point speed
     if config.SPEED_ANOMALY_ACTION != "keep":
         print(
             f"  Filtering by point-to-point speed (max {config.MAX_POINT_TO_POINT_SPEED_KMH} km/h, action: {config.SPEED_ANOMALY_ACTION})..."
         )
-        before = len(df)
+        before = df.height
 
         segment_dfs = []
         unique_mmsi = df["MMSI"].unique().to_list()
@@ -198,18 +204,11 @@ def clean_dataframe(df):
 
         df = pl.concat(segment_dfs, how="vertical")
         df = df.sort(["MMSI", "Timestamp"])
-        print(f"  Removed {before - len(df)} rows with excessive point-to-point speed. Rows now: {len(df)}")
+        print(f"  Removed {before - df.height} rows with excessive point-to-point speed. Rows now: {df.height}")
 
     # Convert SOG from knots to m/s
     print("  Converting SOG from knots to m/s...")
     df = df.with_columns((pl.col("SOG") * config.KNOTS_TO_MS).alias("SOG"))
-
-    # Filter by ship type (if available)
-    if "Ship type" in df.columns:
-        print("  Filtering by ship type...")
-        before = len(df)
-        df = df.filter(pl.col("Ship type").is_in(config.SHIP_TYPES))
-        print(f"  Kept {'/'.join(config.SHIP_TYPES)} only. Removed {before - len(df)} rows. Rows now: {len(df)}")
 
     return df
 
@@ -271,8 +270,8 @@ def process_zip_file(args):
 
         print(f"  [{zip_path.name}] Final statistics:")
         print(f"  [{zip_path.name}] Unique vessels (MMSI): {df['MMSI'].n_unique()}")
-        print(f"  [{zip_path.name}] Total datapoints: {len(df)}")
-        print(f"  [{zip_path.name}] Average points per vessel: {len(df) / df['MMSI'].n_unique():.1f}")
+        print(f"  [{zip_path.name}] Total datapoints: {df.height}")
+        print(f"  [{zip_path.name}] Average points per vessel: {df.height / df['MMSI'].n_unique():.1f}")
 
         segment_counts = df.select([pl.col("MMSI"), pl.col("Segment")]).unique().height
         print(f"  [{zip_path.name}] Total segments: {segment_counts}")
@@ -343,4 +342,3 @@ def process_multiple_zip_files(data_dir, num_workers=4):
                 print(f"  - {r['zip']}: {r.get('error', 'Unknown error')}")
 
     return {"processed": processed, "skipped": skipped, "failed": failed}
-
