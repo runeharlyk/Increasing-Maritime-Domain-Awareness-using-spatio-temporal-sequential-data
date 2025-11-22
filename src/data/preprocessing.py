@@ -5,6 +5,8 @@ from sklearn.preprocessing import StandardScaler
 from tqdm import tqdm
 
 from src.utils import config
+from src.utils.geo import haversine_distance
+
 
 def merge_cross_file_segments(df, max_time_gap_minutes=config.SEGMENT_TIME_GAP / 60):
     print("\nMerging continuous segments across file boundaries...")
@@ -58,6 +60,22 @@ def merge_cross_file_segments(df, max_time_gap_minutes=config.SEGMENT_TIME_GAP /
     return df
 
 
+def check_sequence_distance(lat_lon_sequence, timestamps_sequence):
+    if len(lat_lon_sequence) < 2:
+        return False
+
+    lats = lat_lon_sequence[:, 0]
+    lons = lat_lon_sequence[:, 1]
+
+    distances_km = haversine_distance(lats[:-1], lons[:-1], lats[1:], lons[1:])
+    total_distance_km = np.sum(distances_km)
+
+    total_timespan_hours = (timestamps_sequence[-1] - timestamps_sequence[0]) / np.timedelta64(1, "h")
+    min_required_distance = config.MIN_DISTANCE_KM * total_timespan_hours
+
+    return total_distance_km >= min_required_distance
+
+
 def load_and_prepare_data(data_dir, max_time_gap_minutes=config.SEGMENT_TIME_GAP / 60):
     print("Loading data...")
 
@@ -100,6 +118,10 @@ def load_and_prepare_data(data_dir, max_time_gap_minutes=config.SEGMENT_TIME_GAP
 
 def create_sequences(df, input_hours, output_hours, sampling_rate):
     print(f"\nCreating sequences ({input_hours}h input -> {output_hours}h output)...")
+    total_hours = input_hours + output_hours
+    print(
+        f"  Filtering sequences: min {config.MIN_DISTANCE_KM} km/h ({config.MIN_DISTANCE_KM * total_hours} km over {total_hours}h)"
+    )
 
     input_timesteps = int(input_hours * 60 / sampling_rate)
     output_timesteps = int(output_hours * 60 / sampling_rate)
@@ -170,6 +192,7 @@ def create_sequences(df, input_hours, output_hours, sampling_rate):
     segment_groups = df_processed.partition_by(group_cols, as_dict=True)
 
     skipped_irregular = 0
+    skipped_stationary = 0
     for group_key, vessel_data in tqdm(segment_groups.items(), desc="Processing segments"):
         n_points = len(vessel_data)
 
@@ -186,6 +209,7 @@ def create_sequences(df, input_hours, output_hours, sampling_rate):
             input_seq = data_array[i : i + input_timesteps]
             output_seq = lat_lon[i + input_timesteps : i + input_timesteps + output_timesteps]
             seq_timestamps = timestamps[i : i + min_length]
+            seq_lat_lon = lat_lon[i : i + min_length]
 
             if np.isnan(input_seq).any() or np.isnan(output_seq).any():
                 continue
@@ -196,12 +220,18 @@ def create_sequences(df, input_hours, output_hours, sampling_rate):
                 skipped_irregular += 1
                 continue
 
+            if not check_sequence_distance(seq_lat_lon, seq_timestamps):
+                skipped_stationary += 1
+                continue
+
             sequences.append(input_seq)
             targets.append(output_seq.flatten())
             mmsi_labels.append(mmsi)
 
     if skipped_irregular > 0:
         print(f"  Skipped {skipped_irregular} sequences with irregular time spacing")
+    if skipped_stationary > 0:
+        print(f"  Skipped {skipped_stationary} sequences with insufficient distance traveled")
 
     sequences = np.array(sequences)
     targets = np.array(targets)
@@ -304,7 +334,7 @@ def normalize_data(X_train, X_val, X_test, y_train, y_val, y_test):
 
             scaler_lat_idx = features_to_normalize.index(lat_col_idx)
             scaler_lon_idx = features_to_normalize.index(lon_col_idx)
-            
+
             max_scale = max(input_scaler.scale_[scaler_lat_idx], input_scaler.scale_[scaler_lon_idx])
             input_scaler.scale_[scaler_lat_idx] = max_scale
             input_scaler.scale_[scaler_lon_idx] = max_scale
@@ -363,16 +393,18 @@ def normalize_data(X_train, X_val, X_test, y_train, y_val, y_test):
     assert not np.isnan(y_test_scaled).any(), "NaN detected in y_test_scaled"
     assert not np.isinf(X_train_scaled).any(), "Inf detected in X_train_scaled"
     assert not np.isinf(y_train_scaled).any(), "Inf detected in y_train_scaled"
-    
+
     print(f"  ✅ Data validation passed: No NaNs or Infs detected")
     print(f"  X_train_scaled range: [{X_train_scaled.min():.2f}, {X_train_scaled.max():.2f}]")
     print(f"  y_train_scaled range: [{y_train_scaled.min():.2f}, {y_train_scaled.max():.2f}]")
-    
+
     # Check for extreme outliers (values beyond ±10 sigma are suspicious)
     if np.abs(X_train_scaled).max() > 10:
-        print(f"  ⚠️  WARNING: Extreme outliers detected in X_train_scaled (max abs value: {np.abs(X_train_scaled).max():.2f})")
+        print(
+            f"  ⚠️  WARNING: Extreme outliers detected in X_train_scaled (max abs value: {np.abs(X_train_scaled).max():.2f})"
+        )
         print(f"     This may cause training instability. Consider clipping outliers.")
-    
+
     print(f"  Input features: {n_features}")
     print(f"  Features normalized (Lat, Lon, SOG, SOG_diff): {features_to_normalize}")
     print(f"  Features NOT normalized (sin/cos): {features_not_normalized}")

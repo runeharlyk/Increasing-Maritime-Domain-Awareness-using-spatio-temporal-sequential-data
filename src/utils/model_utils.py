@@ -4,7 +4,7 @@ from pathlib import Path
 import torch
 import matplotlib.pyplot as plt
 
-from src.utils.geo import haversine_distance_torch
+from src.utils.geo import haversine_distance_torch, haversine_distance
 from src.utils import config
 
 
@@ -17,7 +17,7 @@ class HaversineLoss(torch.nn.Module):
     def forward(self, predictions, targets):
         predictions = torch.clamp(predictions, -10.0, 10.0)
         targets = torch.clamp(targets, -10.0, 10.0)
-        
+
         pred_reshaped = predictions.reshape(-1, 2)
         target_reshaped = targets.reshape(-1, 2)
 
@@ -179,11 +179,27 @@ def load_trajectory_data(data_dir, parquet_files):
     return df
 
 
-def create_prediction_sequences(df, config, n_vessels=None):
-    input_hours = config["input_hours"]
-    output_hours = config["output_hours"]
-    sampling_rate = config["sampling_rate"]
-    feature_cols = config["feature_cols"]
+def check_sequence_distance(lat_lon_sequence, timestamps_sequence):
+    if len(lat_lon_sequence) < 2:
+        return False
+
+    lats = lat_lon_sequence[:, 0]
+    lons = lat_lon_sequence[:, 1]
+
+    distances_km = haversine_distance(lats[:-1], lons[:-1], lats[1:], lons[1:])
+    total_distance_km = np.sum(distances_km)
+
+    total_timespan_hours = (timestamps_sequence[-1] - timestamps_sequence[0]) / np.timedelta64(1, "h")
+    min_required_distance = config.MIN_DISTANCE_KM * total_timespan_hours
+
+    return total_distance_km >= min_required_distance
+
+
+def create_prediction_sequences(df, config_dict, n_vessels=None):
+    input_hours = config_dict["input_hours"]
+    output_hours = config_dict["output_hours"]
+    sampling_rate = config_dict["sampling_rate"]
+    feature_cols = config_dict["feature_cols"]
 
     input_timesteps = int(input_hours * 60 / sampling_rate)
     output_timesteps = int(output_hours * 60 / sampling_rate)
@@ -193,6 +209,10 @@ def create_prediction_sequences(df, config, n_vessels=None):
     print(f"  Input: {input_hours}h ({input_timesteps} timesteps)")
     print(f"  Output: {output_hours}h ({output_timesteps} timesteps)")
     print(f"  Sampling rate: {sampling_rate} minutes")
+    total_hours = input_hours + output_hours
+    print(
+        f"  Filtering sequences: min {config.MIN_DISTANCE_KM} km/h ({config.MIN_DISTANCE_KM * total_hours} km over {total_hours}h)"
+    )
 
     base_features = ["Latitude", "Longitude", "SOG", "COG"]
 
@@ -272,6 +292,7 @@ def create_prediction_sequences(df, config, n_vessels=None):
 
     count = 0
     skipped_irregular = 0
+    skipped_stationary = 0
     for group_key, vessel_data in segment_groups.items():
         n_points = len(vessel_data)
 
@@ -298,6 +319,10 @@ def create_prediction_sequences(df, config, n_vessels=None):
             skipped_irregular += 1
             continue
 
+        if not check_sequence_distance(full_traj, traj_timestamps):
+            skipped_stationary += 1
+            continue
+
         sequences.append(input_seq)
         targets.append(output_seq.flatten())
         mmsi_list.append(mmsi)
@@ -310,6 +335,8 @@ def create_prediction_sequences(df, config, n_vessels=None):
 
     if skipped_irregular > 0:
         print(f"  Skipped {skipped_irregular} sequences with irregular time spacing")
+    if skipped_stationary > 0:
+        print(f"  Skipped {skipped_stationary} sequences with insufficient distance traveled")
 
     sequences = np.array(sequences)
     targets = np.array(targets)
