@@ -12,15 +12,15 @@ from src.data.preprocessing import (
     split_by_vessel,
     normalize_data,
 )
-from src.models import TrajectoryDataset, EncoderDecoderGRU
+from src.models import TrajectoryDataset, EncoderDecoderGRU, EncoderDecoderGRUWithAttention
 from src.utils.model_utils import HaversineLoss, train_model, evaluate_model
 from src.utils import set_seed
 
 set_seed(42)
 
 DATA_DIR = Path("data")
-MODEL_PATH = "best_model_encoder_decoder.pt"
-MODEL = EncoderDecoderGRU
+MODEL_PATH = "best_model_encoder_decoder_with_attention.pt"
+MODEL = EncoderDecoderGRUWithAttention
 INPUT_HOURS = 2
 OUTPUT_HOURS = 1
 SAMPLING_RATE = 5
@@ -28,7 +28,7 @@ HIDDEN_SIZE = 256
 NUM_LAYERS = 3
 BATCH_SIZE = 512
 EPOCHS = 100
-LEARNING_RATE = 0.00005
+LEARNING_RATE = 0.0001
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 print("Using device: ", DEVICE)
@@ -162,13 +162,13 @@ for epoch in range(EPOCHS):
                     "feature_cols": feature_cols,
                 },
             },
-            "best_model_encoder_decoder.pt",
+            MODEL_PATH,
         )
         print(f"  -> Saved best model (val_loss: {val_loss:.6f})")
 
         # Log best model to wandb
         wandb.log({"best_val_loss": best_val_loss})
-        wandb.save("best_model_encoder_decoder.pt")
+        wandb.save(MODEL_PATH)
     else:
         patience_counter += 1
         if patience_counter >= early_stop_patience:
@@ -181,7 +181,7 @@ print("\n" + "=" * 50)
 print("FINAL EVALUATION ON TEST SET")
 print("=" * 50)
 
-checkpoint = torch.load("best_model_encoder_decoder.pt", weights_only=False)
+checkpoint = torch.load(MODEL_PATH, weights_only=False)
 model.load_state_dict(checkpoint["model_state_dict"])
 test_loss = evaluate_model(model, test_loader, criterion, DEVICE)
 print(f"Final Test Loss: {test_loss:.6f}")

@@ -4,12 +4,14 @@ from .gru_models import (
     AdvancedGRUTrajectoryPredictor,
     EncoderDecoderGRU,
     SimpleGRUPredictor,
+    EncoderDecoderGRUWithAttention,
 )
 
 __all__ = [
-    'TrajectoryDataset',
-    'AttentionLayer',
-    'AdvancedGRUTrajectoryPredictor',
-    'EncoderDecoderGRU',
-    'SimpleGRUPredictor',
+    "TrajectoryDataset",
+    "AttentionLayer",
+    "AdvancedGRUTrajectoryPredictor",
+    "EncoderDecoderGRU",
+    "SimpleGRUPredictor",
+    "EncoderDecoderGRUWithAttention",
 ]
