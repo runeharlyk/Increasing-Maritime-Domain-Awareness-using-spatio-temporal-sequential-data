@@ -51,11 +51,6 @@ The project focuses on Class A and B vessels (Cargo, Tanker, Passenger) within t
 2. **Preprocessing**: Run the cleaning pipeline to filter MMSIs, remove stationary vessels (< 10 knots), and split trajectories into segments
 
 
-```bash
-# Example usage (adjust based on your actual implementation)
-python -m src.data.cleaning
-python -m src.data.preprocessing
-```
 
 ## Models
 We implemented and evaluated the following sequence-to-sequence architectures in `src/models/gru_models.py`:
