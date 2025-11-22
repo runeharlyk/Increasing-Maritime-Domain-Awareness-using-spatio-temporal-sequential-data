@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 
 from src.utils.geo import haversine_distance_torch, haversine_distance
 from src.utils import config
+from src.data.preprocessing import check_sequence_distance
 
 
 class HaversineLoss(torch.nn.Module):
@@ -140,59 +141,6 @@ def load_model_and_config(model_path, model_class, device="cpu"):
 
     return model, config, input_scaler, output_scaler
 
-
-def load_trajectory_data(data_dir, parquet_files):
-    print(f"\nLoading trajectory data from {len(parquet_files)} file(s)...")
-
-    data_dir = Path(data_dir)
-    parquet_paths = [data_dir / f for f in parquet_files]
-
-    for parquet_path in parquet_paths:
-        if not parquet_path.exists():
-            raise FileNotFoundError(f"Parquet file not found: {parquet_path}")
-
-    dfs = []
-    for idx, parquet_path in enumerate(parquet_paths):
-        print(f"  Loading {parquet_path.name}...")
-        df_temp = pl.read_parquet(parquet_path)
-        df_temp = df_temp.with_columns(pl.lit(idx).alias("FileIndex"))
-        dfs.append(df_temp)
-
-    df = pl.concat(dfs, how="vertical")
-
-    print(f"Total rows: {len(df):,}")
-    print(f"Unique vessels (MMSI): {df['MMSI'].n_unique()}")
-
-    required_cols = ["MMSI", "Latitude", "Longitude", "SOG", "COG", "Segment", "Timestamp"]
-    missing = [col for col in required_cols if col not in df.columns]
-    assert len(missing) == 0, f"Missing required columns: {missing}"
-    assert df["Segment"].is_not_null().all(), "Segment contains null values"
-    assert df["Timestamp"].is_not_null().all(), "Timestamp contains null values"
-
-    df = df.sort(["MMSI", "Timestamp"])
-
-    if df["Timestamp"].dtype != pl.Datetime:
-        df = df.with_columns(pl.col("Timestamp").cast(pl.Datetime))
-
-    assert df["Timestamp"].dtype == pl.Datetime, "Timestamp must be datetime type"
-
-    return df
-
-
-def check_sequence_distance(lat_lon_sequence, timestamps_sequence):
-    if len(lat_lon_sequence) < 2:
-        return False
-
-    lats = lat_lon_sequence[:, 0]
-    lons = lat_lon_sequence[:, 1]
-
-    distances_km = haversine_distance(lats[:-1], lons[:-1], lats[1:], lons[1:])
-    total_distance_km = np.sum(distances_km)
-
-    total_timespan_hours = (timestamps_sequence[-1] - timestamps_sequence[0]) / np.timedelta64(1, "h")
-    min_required_distance = config.MIN_DISTANCE_KM * total_timespan_hours
-
-    return total_distance_km >= min_required_distance
 
 
 def create_prediction_sequences(df, config_dict, n_vessels=None):

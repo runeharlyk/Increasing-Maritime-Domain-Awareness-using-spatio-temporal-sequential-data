@@ -423,3 +423,19 @@ def normalize_data(X_train, X_val, X_test, y_train, y_val, y_test):
         input_scaler,
         output_scaler,
     )
+
+
+def check_sequence_distance(lat_lon_sequence, timestamps_sequence):
+    if len(lat_lon_sequence) < 2:
+        return False
+
+    lats = lat_lon_sequence[:, 0]
+    lons = lat_lon_sequence[:, 1]
+
+    distances_km = haversine_distance(lats[:-1], lons[:-1], lats[1:], lons[1:])
+    total_distance_km = np.sum(distances_km)
+
+    total_timespan_hours = (timestamps_sequence[-1] - timestamps_sequence[0]) / np.timedelta64(1, "h")
+    min_required_distance = config.MIN_DISTANCE_KM * total_timespan_hours
+
+    return total_distance_km >= min_required_distance
