@@ -5,6 +5,7 @@ import torch
 import matplotlib.pyplot as plt
 
 from src.utils.geo import haversine_distance_torch
+from src.utils import config
 
 
 class HaversineLoss(torch.nn.Module):
