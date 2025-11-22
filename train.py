@@ -26,9 +26,9 @@ OUTPUT_HOURS = 1
 SAMPLING_RATE = 5
 HIDDEN_SIZE = 256
 NUM_LAYERS = 3
-BATCH_SIZE = 1024
+BATCH_SIZE = 512
 EPOCHS = 100
-LEARNING_RATE = 0.0001
+LEARNING_RATE = 0.00005
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 print("Using device: ", DEVICE)
@@ -61,9 +61,7 @@ wandb.init(
 # Prepare data
 
 df = load_and_prepare_data(DATA_DIR)
-sequences, targets, mmsi_labels, feature_cols = create_sequences(
-    df, INPUT_HOURS, OUTPUT_HOURS, SAMPLING_RATE
-)
+sequences, targets, mmsi_labels, feature_cols = create_sequences(df, INPUT_HOURS, OUTPUT_HOURS, SAMPLING_RATE)
 
 X_train, X_val, X_test, y_train, y_val, y_test = split_by_vessel(
     sequences, targets, mmsi_labels, train_ratio=0.7, val_ratio=0.15, random_seed=42
@@ -77,9 +75,9 @@ train_dataset = TrajectoryDataset(X_train, y_train)
 val_dataset = TrajectoryDataset(X_val, y_val)
 test_dataset = TrajectoryDataset(X_test, y_test)
 
-train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=8)
-val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=8)
-test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=8)
+train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=0)
+val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=0)
+test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=0)
 
 input_size = len(feature_cols)
 output_timesteps = y_train.shape[1] // 2

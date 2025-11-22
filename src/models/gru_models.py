@@ -109,17 +109,32 @@ class EncoderDecoderGRU(nn.Module):
 
         self.fc = nn.Linear(hidden_size, 2)
 
+        self._init_weights()
+
+    def _init_weights(self):
+        for name, param in self.named_parameters():
+            if "weight_ih" in name:
+                nn.init.xavier_uniform_(param.data)
+            elif "weight_hh" in name:
+                nn.init.orthogonal_(param.data)
+            elif "bias" in name:
+                param.data.fill_(0)
+
+        nn.init.xavier_uniform_(self.fc.weight, gain=0.1)
+        nn.init.zeros_(self.fc.bias)
     def forward(self, x, target_seq=None, teacher_forcing_ratio=0.5):
         batch_size = x.size(0)
 
+        x = torch.clamp(x, -10.0, 10.0)
+
         encoder_out, hidden = self.encoder(x)
-        
-        if torch.isnan(hidden).any():
-            print(f"NaN in encoder hidden state!")
+
+        if torch.isnan(hidden).any() or torch.isnan(encoder_out).any():
+            print(f"NaN in encoder output!")
             print(f"  Input x range: [{x.min():.2f}, {x.max():.2f}]")
             raise ValueError("NaN in encoder hidden")
         
-        hidden = torch.clamp(hidden, -10.0, 10.0)
+        hidden = torch.clamp(hidden, -20.0, 20.0)
 
         outputs = []
 
@@ -128,26 +143,26 @@ class EncoderDecoderGRU(nn.Module):
 
         for t in range(self.output_seq_len):
             decoder_out, hidden = self.decoder(decoder_input, hidden)
-            
+
             if torch.isnan(decoder_out).any() or torch.isnan(hidden).any():
                 print(f"NaN in decoder at timestep {t}")
                 print(f"  decoder_input range: [{decoder_input.min():.2f}, {decoder_input.max():.2f}]")
                 print(f"  decoder_out has NaN: {torch.isnan(decoder_out).any()}")
                 print(f"  hidden has NaN: {torch.isnan(hidden).any()}")
                 raise ValueError(f"NaN in decoder at timestep {t}")
-            
-            hidden = torch.clamp(hidden, -10.0, 10.0)
-            
+
+            hidden = torch.clamp(hidden, -20.0, 20.0)
+
             delta = self.fc(decoder_out)
             delta = torch.tanh(delta)
-            
+
             prediction = decoder_input + delta
             prediction = torch.clamp(prediction, -5.0, 5.0)
-            
+
             outputs.append(prediction)
 
             if target_seq is not None and torch.rand(1).item() < teacher_forcing_ratio:
-                decoder_input = target_seq[:, t: t + 1, :]
+                decoder_input = target_seq[:, t : t + 1, :].detach()
                 decoder_input = torch.clamp(decoder_input, -5.0, 5.0)
             else:
                 decoder_input = prediction

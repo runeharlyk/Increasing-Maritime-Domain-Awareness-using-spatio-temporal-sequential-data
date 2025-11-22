@@ -14,6 +14,9 @@ class HaversineLoss(torch.nn.Module):
         self.register_buffer("mean_", torch.tensor(output_scaler.mean_, dtype=torch.float32))
 
     def forward(self, predictions, targets):
+        predictions = torch.clamp(predictions, -10.0, 10.0)
+        targets = torch.clamp(targets, -10.0, 10.0)
+        
         pred_reshaped = predictions.reshape(-1, 2)
         target_reshaped = targets.reshape(-1, 2)
 
@@ -69,7 +72,7 @@ def train_model(model, train_loader, criterion, optimizer, device, epoch, total_
 
         loss.backward()
 
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
 
         optimizer.step()
         total_loss += loss.item()

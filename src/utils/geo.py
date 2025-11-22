@@ -22,6 +22,7 @@ def haversine_distance(lat1, lon1, lat2, lon2):
 
 def haversine_distance_torch(lat1, lon1, lat2, lon2):
     R = 6371.0
+    eps = 1e-8
 
     lat1_rad = torch.deg2rad(lat1)
     lat2_rad = torch.deg2rad(lat2)
@@ -32,8 +33,12 @@ def haversine_distance_torch(lat1, lon1, lat2, lon2):
     dlon = lon2_rad - lon1_rad
 
     a = torch.sin(dlat / 2) ** 2 + torch.cos(lat1_rad) * torch.cos(lat2_rad) * torch.sin(dlon / 2) ** 2
-    a = torch.clamp(a, 0.0, 1.0) 
-    c = 2 * torch.atan2(torch.sqrt(a), torch.sqrt(1 - a + 1e-7))
+    a = torch.clamp(a, 0.0, 1.0 - eps)
+    
+    sqrt_a = torch.sqrt(a + eps)
+    sqrt_1_minus_a = torch.sqrt(1 - a + eps)
+    
+    c = 2 * torch.atan2(sqrt_a, sqrt_1_minus_a)
 
     distance = R * c
     return distance

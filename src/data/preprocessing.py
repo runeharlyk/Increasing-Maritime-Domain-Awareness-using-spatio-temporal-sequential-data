@@ -295,9 +295,13 @@ def normalize_data(X_train, X_val, X_test, y_train, y_val, y_test):
         lat_col_idx = next((i for i, col in enumerate(feature_cols) if col == "Latitude"), None)
         lon_col_idx = next((i for i, col in enumerate(feature_cols) if col == "Longitude"), None)
 
-        if lat_col_idx is not None and lon_col_idx is not None and \
-           lat_col_idx in features_to_normalize and lon_col_idx in features_to_normalize:
-            
+        if (
+            lat_col_idx is not None
+            and lon_col_idx is not None
+            and lat_col_idx in features_to_normalize
+            and lon_col_idx in features_to_normalize
+        ):
+
             scaler_lat_idx = features_to_normalize.index(lat_col_idx)
             scaler_lon_idx = features_to_normalize.index(lon_col_idx)
             
@@ -308,15 +312,21 @@ def normalize_data(X_train, X_val, X_test, y_train, y_val, y_test):
         else:
             print("  Info: Spatial scaling skipped (Latitude or Longitude not in normalized features).")
 
-    X_train_scaled[:, :, features_to_normalize] = input_scaler.transform(X_train_norm).reshape(
+    transformed = input_scaler.transform(X_train_norm)
+    X_train_scaled[:, :, features_to_normalize] = transformed.reshape(
         n_samples, n_timesteps, len(features_to_normalize)
     )
-    X_val_scaled[:, :, features_to_normalize] = input_scaler.transform(
-        X_val[:, :, features_to_normalize].reshape(-1, len(features_to_normalize))
-    ).reshape(X_val.shape[0], n_timesteps, len(features_to_normalize))
-    X_test_scaled[:, :, features_to_normalize] = input_scaler.transform(
-        X_test[:, :, features_to_normalize].reshape(-1, len(features_to_normalize))
-    ).reshape(X_test.shape[0], n_timesteps, len(features_to_normalize))
+
+    X_val_norm = X_val[:, :, features_to_normalize].reshape(-1, len(features_to_normalize))
+    transformed_val = input_scaler.transform(X_val_norm)
+    X_val_scaled[:, :, features_to_normalize] = transformed_val.reshape(
+        X_val.shape[0], n_timesteps, len(features_to_normalize)
+    )
+    X_test_norm = X_test[:, :, features_to_normalize].reshape(-1, len(features_to_normalize))
+    transformed_test = input_scaler.transform(X_test_norm)
+    X_test_scaled[:, :, features_to_normalize] = transformed_test.reshape(
+        X_test.shape[0], n_timesteps, len(features_to_normalize)
+    )
 
     clip_value = 5.0
     X_train_scaled = np.clip(X_train_scaled, -clip_value, clip_value)
@@ -332,9 +342,14 @@ def normalize_data(X_train, X_val, X_test, y_train, y_val, y_test):
     output_scaler.scale_[0] = max_scale
     output_scaler.scale_[1] = max_scale
 
-    y_train_scaled = output_scaler.transform(y_train_reshaped).reshape(y_train.shape[0], -1)
-    y_val_scaled = output_scaler.transform(y_val.reshape(-1, 2)).reshape(y_val.shape[0], -1)
-    y_test_scaled = output_scaler.transform(y_test.reshape(-1, 2)).reshape(y_test.shape[0], -1)
+    y_train_transformed = output_scaler.transform(y_train_reshaped)
+    y_train_scaled = y_train_transformed.reshape(y_train.shape[0], -1)
+
+    y_val_transformed = output_scaler.transform(y_val.reshape(-1, 2))
+    y_val_scaled = y_val_transformed.reshape(y_val.shape[0], -1)
+
+    y_test_transformed = output_scaler.transform(y_test.reshape(-1, 2))
+    y_test_scaled = y_test_transformed.reshape(y_test.shape[0], -1)
 
     y_train_scaled = np.clip(y_train_scaled, -clip_value, clip_value)
     y_val_scaled = np.clip(y_val_scaled, -clip_value, clip_value)
