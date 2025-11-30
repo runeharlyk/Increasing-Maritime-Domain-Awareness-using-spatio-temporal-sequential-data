@@ -416,6 +416,10 @@ def normalize_data(X_train, X_val, X_test, y_train, y_val, y_test):
     y_test_transformed = output_scaler.transform(y_test.reshape(-1, 2))
     y_test_scaled = y_test_transformed.reshape(y_test.shape[0], -1)
 
+    X_train_scaled = np.clip(X_train_scaled, -10, 10)
+    X_val_scaled = np.clip(X_val_scaled, -10, 10)
+    X_test_scaled = np.clip(X_test_scaled, -10, 10)
+
     assert not np.isnan(X_train_scaled).any(), "NaN detected in X_train_scaled"
     assert not np.isnan(X_val_scaled).any(), "NaN detected in X_val_scaled"
     assert not np.isnan(X_test_scaled).any(), "NaN detected in X_test_scaled"
