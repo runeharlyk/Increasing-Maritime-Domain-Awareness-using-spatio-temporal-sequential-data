@@ -82,7 +82,6 @@ class EncoderDecoderGRU(nn.Module):
                 raise ValueError(f"NaN in decoder at timestep {t}")
 
             delta = self.fc(decoder_out)
-            delta = torch.tanh(delta)
 
             prediction = decoder_input + delta
 
@@ -196,7 +195,6 @@ class EncoderDecoderGRUWithAttention(nn.Module):
                 raise ValueError(f"NaN in decoder at timestep {t}")
 
             delta = self.fc(decoder_out)
-            delta = torch.tanh(delta)
 
             prediction = decoder_input + delta
 
