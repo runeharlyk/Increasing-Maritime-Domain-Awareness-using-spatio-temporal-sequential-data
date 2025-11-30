@@ -256,6 +256,9 @@ def create_prediction_sequences(df, config_dict, n_vessels=None):
     count = 0
     skipped_irregular = 0
     skipped_stationary = 0
+    skipped_harbor_approach = 0
+    skipped_other = 0
+    
     for group_key, vessel_data in segment_groups.items():
         n_points = len(vessel_data)
 
@@ -282,8 +285,14 @@ def create_prediction_sequences(df, config_dict, n_vessels=None):
             skipped_irregular += 1
             continue
 
-        if not check_sequence_distance(full_traj, traj_timestamps):
-            skipped_stationary += 1
+        is_valid, reason = check_sequence_distance(full_traj, traj_timestamps, input_timesteps)
+        if not is_valid:
+            if reason == "insufficient_output_distance":
+                skipped_harbor_approach += 1
+            elif reason == "insufficient_total_distance":
+                skipped_stationary += 1
+            else:
+                skipped_other += 1
             continue
 
         sequences.append(input_seq)
@@ -299,7 +308,11 @@ def create_prediction_sequences(df, config_dict, n_vessels=None):
     if skipped_irregular > 0:
         print(f"  Skipped {skipped_irregular} sequences with irregular time spacing")
     if skipped_stationary > 0:
-        print(f"  Skipped {skipped_stationary} sequences with insufficient distance traveled")
+        print(f"  Skipped {skipped_stationary} sequences with insufficient distance traveled (total)")
+    if skipped_harbor_approach > 0:
+        print(f"  Skipped {skipped_harbor_approach} sequences with slow/stopping motion in prediction window (likely harbor approaches)")
+    if skipped_other > 0:
+        print(f"  Skipped {skipped_other} sequences for other reasons")
 
     sequences = np.array(sequences)
     targets = np.array(targets)

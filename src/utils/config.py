@@ -31,6 +31,10 @@ SPEED_ANOMALY_ACTION = "drop"
 
 MIN_DISTANCE_KM = 5  # Minimum km per hour that must be traveled in each sequence
 
+MIN_DISTANCE_KM_OUTPUT = 3
+
+CHECK_OUTPUT_DISTANCE_SEPARATELY = True
+
 # Feature Engineering
 FEATURE_COLS = [
     "Latitude",

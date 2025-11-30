@@ -60,9 +60,9 @@ def merge_cross_file_segments(df, max_time_gap_minutes=config.SEGMENT_TIME_GAP /
     return df
 
 
-def check_sequence_distance(lat_lon_sequence, timestamps_sequence):
+def check_sequence_distance(lat_lon_sequence, timestamps_sequence, input_timesteps=None):
     if len(lat_lon_sequence) < 2:
-        return False
+        return False, "too_short"
 
     lats = lat_lon_sequence[:, 0]
     lons = lat_lon_sequence[:, 1]
@@ -73,7 +73,34 @@ def check_sequence_distance(lat_lon_sequence, timestamps_sequence):
     total_timespan_hours = (timestamps_sequence[-1] - timestamps_sequence[0]) / np.timedelta64(1, "h")
     min_required_distance = config.MIN_DISTANCE_KM * total_timespan_hours
 
-    return total_distance_km >= min_required_distance
+    if total_distance_km < min_required_distance:
+        return False, "insufficient_total_distance"
+
+    if config.CHECK_OUTPUT_DISTANCE_SEPARATELY and input_timesteps is not None:
+        if input_timesteps >= len(lat_lon_sequence):
+            return False, "invalid_split"
+
+        output_lat_lon = lat_lon_sequence[input_timesteps:]
+        output_timestamps = timestamps_sequence[input_timesteps:]
+
+        if len(output_lat_lon) < 2:
+            return False, "output_too_short"
+
+        output_lats = output_lat_lon[:, 0]
+        output_lons = output_lat_lon[:, 1]
+
+        output_distances_km = haversine_distance(
+            output_lats[:-1], output_lons[:-1], output_lats[1:], output_lons[1:]
+        )
+        output_total_distance_km = np.sum(output_distances_km)
+
+        output_timespan_hours = (output_timestamps[-1] - output_timestamps[0]) / np.timedelta64(1, "h")
+        output_min_required_distance = config.MIN_DISTANCE_KM_OUTPUT * output_timespan_hours
+
+        if output_total_distance_km < output_min_required_distance:
+            return False, "insufficient_output_distance"
+
+    return True, "valid"
 
 
 def load_and_prepare_data(data_dir, max_time_gap_minutes=config.SEGMENT_TIME_GAP / 60):
@@ -193,6 +220,9 @@ def create_sequences(df, input_hours, output_hours, sampling_rate):
 
     skipped_irregular = 0
     skipped_stationary = 0
+    skipped_harbor_approach = 0
+    skipped_other = 0
+    
     for group_key, vessel_data in tqdm(segment_groups.items(), desc="Processing segments"):
         n_points = len(vessel_data)
 
@@ -220,8 +250,14 @@ def create_sequences(df, input_hours, output_hours, sampling_rate):
                 skipped_irregular += 1
                 continue
 
-            if not check_sequence_distance(seq_lat_lon, seq_timestamps):
-                skipped_stationary += 1
+            is_valid, reason = check_sequence_distance(seq_lat_lon, seq_timestamps, input_timesteps)
+            if not is_valid:
+                if reason == "insufficient_output_distance":
+                    skipped_harbor_approach += 1
+                elif reason == "insufficient_total_distance":
+                    skipped_stationary += 1
+                else:
+                    skipped_other += 1
                 continue
 
             sequences.append(input_seq)
@@ -231,7 +267,11 @@ def create_sequences(df, input_hours, output_hours, sampling_rate):
     if skipped_irregular > 0:
         print(f"  Skipped {skipped_irregular} sequences with irregular time spacing")
     if skipped_stationary > 0:
-        print(f"  Skipped {skipped_stationary} sequences with insufficient distance traveled")
+        print(f"  Skipped {skipped_stationary} sequences with insufficient distance traveled (total)")
+    if skipped_harbor_approach > 0:
+        print(f"  Skipped {skipped_harbor_approach} sequences with slow/stopping motion in prediction window (likely harbor approaches)")
+    if skipped_other > 0:
+        print(f"  Skipped {skipped_other} sequences for other reasons")
 
     sequences = np.array(sequences)
     targets = np.array(targets)
