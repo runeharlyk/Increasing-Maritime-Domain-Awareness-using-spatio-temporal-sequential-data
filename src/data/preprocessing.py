@@ -358,11 +358,6 @@ def normalize_data(X_train, X_val, X_test, y_train, y_val, y_test):
         X_test.shape[0], n_timesteps, len(features_to_normalize)
     )
 
-    clip_value = 5.0
-    X_train_scaled = np.clip(X_train_scaled, -clip_value, clip_value)
-    X_val_scaled = np.clip(X_val_scaled, -clip_value, clip_value)
-    X_test_scaled = np.clip(X_test_scaled, -clip_value, clip_value)
-
     output_scaler = StandardScaler()
     output_timesteps = y_train.shape[1] // 2
     y_train_reshaped = y_train.reshape(-1, 2)
@@ -380,10 +375,6 @@ def normalize_data(X_train, X_val, X_test, y_train, y_val, y_test):
 
     y_test_transformed = output_scaler.transform(y_test.reshape(-1, 2))
     y_test_scaled = y_test_transformed.reshape(y_test.shape[0], -1)
-
-    y_train_scaled = np.clip(y_train_scaled, -clip_value, clip_value)
-    y_val_scaled = np.clip(y_val_scaled, -clip_value, clip_value)
-    y_test_scaled = np.clip(y_test_scaled, -clip_value, clip_value)
 
     assert not np.isnan(X_train_scaled).any(), "NaN detected in X_train_scaled"
     assert not np.isnan(X_val_scaled).any(), "NaN detected in X_val_scaled"
@@ -423,19 +414,3 @@ def normalize_data(X_train, X_val, X_test, y_train, y_val, y_test):
         input_scaler,
         output_scaler,
     )
-
-
-def check_sequence_distance(lat_lon_sequence, timestamps_sequence):
-    if len(lat_lon_sequence) < 2:
-        return False
-
-    lats = lat_lon_sequence[:, 0]
-    lons = lat_lon_sequence[:, 1]
-
-    distances_km = haversine_distance(lats[:-1], lons[:-1], lats[1:], lons[1:])
-    total_distance_km = np.sum(distances_km)
-
-    total_timespan_hours = (timestamps_sequence[-1] - timestamps_sequence[0]) / np.timedelta64(1, "h")
-    min_required_distance = config.MIN_DISTANCE_KM * total_timespan_hours
-
-    return total_distance_km >= min_required_distance
