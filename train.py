@@ -28,7 +28,7 @@ HIDDEN_SIZE = 256
 NUM_LAYERS = 3
 BATCH_SIZE = 512
 EPOCHS = 100
-LEARNING_RATE = 0.0001
+LEARNING_RATE = 1e-4
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 print("Using device: ", DEVICE)
