@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 import wandb
+import platform
 
 from src.data.preprocessing import (
     load_and_prepare_data,
@@ -34,8 +35,11 @@ DEVICE = torch.device(
     else "mps" if torch.backends.mps.is_available()
     else "cpu"
 )
+NUM_WORKERS = 0 if platform.system() == "Windows" else 8
 
-print("Using device: ", DEVICE)
+print(f"Using device: {DEVICE}")
+print(f"Platform: {platform.system()}")
+print(f"DataLoader workers: {NUM_WORKERS}")
 
 # Initialize Weights & Biases
 wandb.init(
@@ -79,9 +83,9 @@ train_dataset = TrajectoryDataset(X_train, y_train)
 val_dataset = TrajectoryDataset(X_val, y_val)
 test_dataset = TrajectoryDataset(X_test, y_test)
 
-train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=0)
-val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=0)
-test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=0)
+train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS)
+val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=NUM_WORKERS)
+test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=NUM_WORKERS)
 
 input_size = len(feature_cols)
 output_timesteps = y_train.shape[1] // 2
