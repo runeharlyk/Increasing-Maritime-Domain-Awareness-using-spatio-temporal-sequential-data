@@ -38,16 +38,6 @@ def rmse_haversine(y_true, y_pred):
     return float(np.sqrt(np.mean(dists ** 2))) 
 
 
-## Average Displacement Error (ADE)
-
-def ade(y_true, y_pred):
-    """
-    ADE: Average Displacement Error over whole trajectories.
-    Here it's effectively the same as mean_haversine_error
-    """
-    dists = pointwise_haversine(y_true, y_pred)  # (B, T)
-    return float(dists.mean())
-
 ## Final Displacement Error (FDE)
 
 def fde(y_true, y_pred):
