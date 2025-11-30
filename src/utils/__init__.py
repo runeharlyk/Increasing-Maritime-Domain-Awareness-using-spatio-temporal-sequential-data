@@ -7,6 +7,15 @@ from .model_utils import (
     HaversineLoss,
 )
 from .randomness import set_seed
+from .metrics import (
+    pointwise_haversine,
+    mean_haversine_error,
+    rmse_haversine,
+    ade,
+    fde,
+    dtw_distance_trajectory,
+    dtw_batch_mean
+)
 
 __all__ = [
     "config",
@@ -16,4 +25,11 @@ __all__ = [
     "predict_trajectories",
     "HaversineLoss",
     "set_seed",
+    "pointwise_haversine",
+    "mean_haversine_error",
+    "rmse_haversine",
+    "ade",
+    "fde",
+    "dtw_distance_trajectory",
+    "dtw_batch_mean"
 ]
