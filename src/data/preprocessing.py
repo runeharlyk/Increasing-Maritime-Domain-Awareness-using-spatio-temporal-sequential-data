@@ -183,7 +183,7 @@ def create_sequences(df, input_hours, output_hours, sampling_rate):
     targets = []
     mmsi_labels = []
 
-    stride = 1
+    stride = output_timesteps
     print(f"Creating sequences with stride={stride}")
 
     group_cols = ["MMSI", "GlobalSegment"]
