@@ -82,22 +82,37 @@ def train_model(model, train_loader, criterion, optimizer, device, epoch, total_
     return total_loss / len(train_loader)
 
 
-def evaluate_model(model, test_loader, criterion, device):
+def evaluate_model(model, test_loader, criterion, output_scaler ,device):
     """Evaluate the model."""
     model.eval()
     total_loss = 0
+    predictions = []
+    true_targets = []
 
     with torch.no_grad():
         for sequences, targets in test_loader:
+            true_targets.append(targets.cpu().numpy())
+            
             sequences = sequences.to(device)
             targets = targets.to(device)
 
             outputs = model(sequences, target_seq=None, teacher_forcing_ratio=0.0)
-
+            predictions.append(outputs.cpu().numpy())
+            
             loss = criterion(outputs, targets)
             total_loss += loss.item()
+            
+    predictions = np.vstack(predictions)
+    predictions_reshaped = predictions.reshape(-1, 2)
+    predictions = output_scaler.inverse_transform(predictions_reshaped).reshape(predictions.shape[0], -1)
 
-    return total_loss / len(test_loader)
+    true_targets = np.vstack(true_targets)
+    true_targets_reshaped = true_targets.reshape(-1, 2)
+    true_targets = output_scaler.inverse_transform(true_targets_reshaped).reshape(true_targets.shape[0], -1)
+
+
+
+    return total_loss / len(test_loader), predictions, true_targets
 
 
 def load_model_and_config(model_path, model_class, device="cpu"):
