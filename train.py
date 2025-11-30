@@ -116,7 +116,7 @@ for epoch in range(EPOCHS):
     teacher_forcing_ratio = max(0.2, 1.0 - (0.8 * (epoch / EPOCHS)))
 
     train_loss = train_model(model, train_loader, criterion, optimizer, DEVICE, epoch, EPOCHS, teacher_forcing_ratio)
-    val_loss = evaluate_model(model, val_loader, criterion, DEVICE)
+    val_loss = evaluate_model(model, val_loader, criterion, output_scaler, DEVICE)
 
     train_losses.append(train_loss)
     val_losses.append(val_loss)
@@ -183,7 +183,7 @@ print("=" * 50)
 
 checkpoint = torch.load(MODEL_PATH, weights_only=False)
 model.load_state_dict(checkpoint["model_state_dict"])
-test_loss = evaluate_model(model, test_loader, criterion, DEVICE)
+test_loss = evaluate_model(model, test_loader, criterion, output_scaler, DEVICE)
 print(f"Final Test Loss: {test_loss:.6f}")
 
 wandb.summary["best_val_loss"] = best_val_loss

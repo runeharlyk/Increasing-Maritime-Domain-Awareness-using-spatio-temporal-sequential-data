@@ -82,7 +82,7 @@ def train_model(model, train_loader, criterion, optimizer, device, epoch, total_
     return total_loss / len(train_loader)
 
 
-def evaluate_model(model, test_loader, criterion, output_scaler ,device):
+def evaluate_model(model, test_loader, criterion, output_scaler, device):
     """Evaluate the model."""
     model.eval()
     total_loss = 0
