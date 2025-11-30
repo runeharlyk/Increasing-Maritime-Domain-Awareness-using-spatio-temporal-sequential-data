@@ -81,7 +81,12 @@ class EncoderDecoderGRU(nn.Module):
                 print(f"  hidden has NaN: {torch.isnan(hidden).any()}")
                 raise ValueError(f"NaN in decoder at timestep {t}")
 
-            delta = self.fc(decoder_out)
+            delta_raw = self.fc(decoder_out)
+            
+            if self.training:
+                delta = 4.0 * torch.tanh(delta_raw / 2.0)
+            else:
+                delta = torch.clamp(delta_raw, -4.0, 4.0)
 
             prediction = decoder_input + delta
 
@@ -194,7 +199,12 @@ class EncoderDecoderGRUWithAttention(nn.Module):
                 print(f"  hidden has NaN: {torch.isnan(hidden).any()}")
                 raise ValueError(f"NaN in decoder at timestep {t}")
 
-            delta = self.fc(decoder_out)
+            delta_raw = self.fc(decoder_out)
+            
+            if self.training:
+                delta = 4.0 * torch.tanh(delta_raw / 2.0)
+            else:
+                delta = torch.clamp(delta_raw, -4.0, 4.0)
 
             prediction = decoder_input + delta
 
