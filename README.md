@@ -48,7 +48,7 @@ The project focuses on Class A and B vessels (Cargo, Tanker, Passenger) within t
 
 1. **Download**: Data is sourced from the Danish Maritime Authority (AISDK).
 
-2. **Preprocessing**: Run the cleaning pipeline to filter MMSIs, remove stationary vessels (< 10 knots), and split trajectories into segments
+2. **Preprocessing**: Run the cleaning pipeline to filter MMSIs, remove stationary vessels (< 5 knots), and split trajectories into segments
 
 
 
@@ -57,7 +57,7 @@ We implemented and evaluated the following sequence-to-sequence architectures in
 
 1. **Seq2Seq GRU**: A standard Encoder-Decoder architecture.
 
-2. **Bidirectional GRU with Attention**: An advanced architecture utilizing a custom Attention mechanism to solve the information bottleneck problem, allowing the model to focus on specific historical time steps.
+2. **GRU with Attention**: An advanced architecture utilizing a custom Attention mechanism to solve the information bottleneck problem, allowing the model to focus on specific historical time steps.
 
 ## Training
 To train the model locally:
@@ -77,10 +77,10 @@ Use the `models.ipynb` notebook to interactively visualize predictions vs. groun
 
 
 ## Methodology Summary
-- Input: Sequence of kinematic data (Lat, Lon, SOG, COG, ROT).
-- Regularization: Dropout (0.3), Layer Normalization.
-- Training: Teacher Forcing applied to the Decoder.
-- Loss Metric: Euclidean Distance (converted from Lat/Lon).
+- Input: Sequence of kinematic data (Lat, Lon, SOG, trigonometric COG encodings, temporal features, and differentials).
+- Regularization: Dropout (0.3).
+- Training: Teacher Forcing applied to the Decoder (starting at 1.0, decaying to 0.2).
+- Loss Metric: Haversine Distance (geodesic distance in meters).
 
 ## Authors
 - Clara Brodt
