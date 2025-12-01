@@ -7,6 +7,7 @@ from .model_utils import (
     HaversineLoss,
     LandMaskHaversineLoss,
 )
+from .land_mask import LandMask
 from .randomness import set_seed
 from .metrics import (
     pointwise_haversine,
@@ -14,7 +15,7 @@ from .metrics import (
     rmse_haversine,
     fde,
     dtw_distance_trajectory,
-    dtw_batch_mean
+    dtw_batch_mean,
 )
 
 __all__ = [
@@ -25,11 +26,12 @@ __all__ = [
     "predict_trajectories",
     "HaversineLoss",
     "LandMaskHaversineLoss",
+    "LandMask",
     "set_seed",
     "pointwise_haversine",
     "mean_haversine_error",
     "rmse_haversine",
     "fde",
     "dtw_distance_trajectory",
-    "dtw_batch_mean"
+    "dtw_batch_mean",
 ]
