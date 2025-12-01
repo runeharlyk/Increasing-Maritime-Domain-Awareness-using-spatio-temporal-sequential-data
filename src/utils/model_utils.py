@@ -44,6 +44,50 @@ class HaversineLoss(torch.nn.Module):
         return distances.mean()
 
 
+class LandMaskHaversineLoss(torch.nn.Module):
+    def __init__(self, output_scaler, land_mask=None, land_weight=5.0):
+        super(LandMaskHaversineLoss, self).__init__()
+        self.register_buffer("scale_", torch.tensor(output_scaler.scale_, dtype=torch.float32))
+        self.register_buffer("mean_", torch.tensor(output_scaler.mean_, dtype=torch.float32))
+
+        self.land_mask = land_mask
+        self.land_weight = land_weight
+
+    def forward(self, predictions, targets, input_trajectory=None):
+        predictions = torch.clamp(predictions, -10.0, 10.0)
+        targets = torch.clamp(targets, -10.0, 10.0)
+
+        pred_reshaped = predictions.reshape(-1, 2)
+        target_reshaped = targets.reshape(-1, 2)
+
+        pred_unscaled = pred_reshaped * self.scale_ + self.mean_
+        target_unscaled = target_reshaped * self.scale_ + self.mean_
+
+        pred_lat = torch.clamp(pred_unscaled[:, 0], -90.0, 90.0)
+        pred_lon = torch.clamp(pred_unscaled[:, 1], -180.0, 180.0)
+        target_lat = torch.clamp(target_unscaled[:, 0], -90.0, 90.0)
+        target_lon = torch.clamp(target_unscaled[:, 1], -180.0, 180.0)
+
+        distances = haversine_distance_torch(pred_lat, pred_lon, target_lat, target_lon)
+        haversine_loss = distances.mean()
+
+        total_loss = haversine_loss
+        loss_components = {"haversine": haversine_loss.item()}
+
+        if self.land_mask is not None:
+            land_penalty = self.land_mask.get_land_penalty(pred_lat, pred_lon)
+            land_loss = land_penalty.mean()
+            total_loss = total_loss + self.land_weight * land_loss
+            loss_components["land"] = land_loss.item()
+
+        if torch.isnan(total_loss):
+            print(f"NaN detected in loss!")
+            for key, value in loss_components.items():
+                print(f"  {key}: {value}")
+
+        return total_loss
+
+
 def train_model(model, train_loader, criterion, optimizer, device, epoch, total_epochs, teacher_forcing_ratio=0.5):
     model.train()
     total_loss = 0
@@ -81,12 +125,13 @@ def train_model(model, train_loader, criterion, optimizer, device, epoch, total_
 
     return total_loss / len(train_loader)
 
-
     """Evaluate the model."""
+
+
 def evaluate_model(model, test_loader, criterion, output_scaler, device, return_predictions=False):
     model.eval()
     total_loss = 0
-    
+
     if return_predictions:
         predictions = []
         true_targets = []
@@ -95,20 +140,20 @@ def evaluate_model(model, test_loader, criterion, output_scaler, device, return_
         for sequences, targets in test_loader:
             if return_predictions:
                 true_targets.append(targets.cpu().numpy())
-            
+
             sequences = sequences.to(device)
             targets = targets.to(device)
 
             outputs = model(sequences, target_seq=None, teacher_forcing_ratio=0.0)
-            
+
             if return_predictions:
                 predictions.append(outputs.cpu().numpy())
-            
+
             loss = criterion(outputs, targets)
             total_loss += loss.item()
-    
+
     avg_loss = total_loss / len(test_loader)
-    
+
     if return_predictions:
         predictions = np.vstack(predictions)
         predictions_reshaped = predictions.reshape(-1, 2)
@@ -117,9 +162,9 @@ def evaluate_model(model, test_loader, criterion, output_scaler, device, return_
         true_targets = np.vstack(true_targets)
         true_targets_reshaped = true_targets.reshape(-1, 2)
         true_targets = output_scaler.inverse_transform(true_targets_reshaped).reshape(true_targets.shape[0], -1)
-        
+
         return avg_loss, predictions, true_targets
-    
+
     return avg_loss
 
 
@@ -163,7 +208,6 @@ def load_model_and_config(model_path, model_class, device="cpu"):
     print(f"  Sampling rate: {config['sampling_rate']} minutes")
 
     return model, config, input_scaler, output_scaler
-
 
 
 def create_prediction_sequences(df, config_dict, n_vessels=None):
@@ -266,7 +310,7 @@ def create_prediction_sequences(df, config_dict, n_vessels=None):
     skipped_stationary = 0
     skipped_harbor_approach = 0
     skipped_other = 0
-    
+
     for group_key, vessel_data in segment_groups.items():
         n_points = len(vessel_data)
 
@@ -318,7 +362,9 @@ def create_prediction_sequences(df, config_dict, n_vessels=None):
     if skipped_stationary > 0:
         print(f"  Skipped {skipped_stationary} sequences with insufficient distance traveled (total)")
     if skipped_harbor_approach > 0:
-        print(f"  Skipped {skipped_harbor_approach} sequences with slow/stopping motion in prediction window (likely harbor approaches)")
+        print(
+            f"  Skipped {skipped_harbor_approach} sequences with slow/stopping motion in prediction window (likely harbor approaches)"
+        )
     if skipped_other > 0:
         print(f"  Skipped {skipped_other} sequences for other reasons")
 

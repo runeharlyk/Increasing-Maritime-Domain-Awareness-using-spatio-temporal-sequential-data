@@ -5,6 +5,7 @@ from .model_utils import (
     create_prediction_sequences,
     predict_trajectories,
     HaversineLoss,
+    LandMaskHaversineLoss,
 )
 from .randomness import set_seed
 from .metrics import (
@@ -23,6 +24,7 @@ __all__ = [
     "create_prediction_sequences",
     "predict_trajectories",
     "HaversineLoss",
+    "LandMaskHaversineLoss",
     "set_seed",
     "pointwise_haversine",
     "mean_haversine_error",

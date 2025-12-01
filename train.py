@@ -6,6 +6,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 import wandb
 import platform
+import numpy as np
 
 from src.data.preprocessing import (
     load_and_prepare_data,
@@ -13,15 +14,23 @@ from src.data.preprocessing import (
     split_by_vessel,
     normalize_data,
 )
-from src.models import TrajectoryDataset, EncoderDecoderGRU, EncoderDecoderGRUWithAttention
-from src.utils.model_utils import HaversineLoss, train_model, evaluate_model
+from src.models import (
+    TrajectoryDataset,
+    EncoderDecoderGRU,
+    EncoderDecoderGRUWithAttention,
+    EncoderDecoderGRUWithDynamics,
+)
+from src.utils.model_utils import HaversineLoss, LandMaskHaversineLoss, train_model, evaluate_model
+from src.utils.land_mask import LandMask
 from src.utils import set_seed
+from src.utils import config
 
 set_seed(42)
 
 DATA_DIR = Path("data")
 MODEL_PATH = "best_model_encoder_decoder_with_attention.pt"
 MODEL = EncoderDecoderGRUWithAttention
+LOSS_FUNCTION = LandMaskHaversineLoss  # HaversineLoss
 INPUT_HOURS = 2
 OUTPUT_HOURS = 1
 SAMPLING_RATE = 5
@@ -30,16 +39,16 @@ NUM_LAYERS = 3
 BATCH_SIZE = 512
 EPOCHS = 100
 LEARNING_RATE = 1e-4
-DEVICE = torch.device(
-    "cuda" if torch.cuda.is_available()
-    else "mps" if torch.backends.mps.is_available()
-    else "cpu"
-)
+
+LAND_WEIGHT = 5.0
+
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
 NUM_WORKERS = 0 if platform.system() == "Windows" else 8
 
 print(f"Using device: {DEVICE}")
 print(f"Platform: {platform.system()}")
 print(f"DataLoader workers: {NUM_WORKERS}")
+print(f"Loss function: {LOSS_FUNCTION.__name__}")
 
 # Initialize Weights & Biases
 wandb.init(
@@ -58,11 +67,13 @@ wandb.init(
         "early_stop_patience": 20,
         "teacher_forcing_start": 1.0,
         "teacher_forcing_end": 0.2,
-        "model": "EncoderDecoderGRU",
+        "model": MODEL.__name__,
+        "loss_function": LOSS_FUNCTION.__name__,
         "device": str(DEVICE),
         "train_ratio": 0.7,
         "val_ratio": 0.15,
         "test_ratio": 0.15,
+        "land_weight": LAND_WEIGHT if LOSS_FUNCTION == LandMaskHaversineLoss else None,
     },
 )
 
@@ -108,7 +119,15 @@ print(f"\nTotal parameters: {total_params:,}")
 wandb.config.update({"input_size": input_size, "total_parameters": total_params})
 wandb.watch(model, log="all", log_freq=100)
 
-criterion = HaversineLoss(output_scaler).to(DEVICE)
+if LOSS_FUNCTION == LandMaskHaversineLoss:
+    land_mask = LandMask(bounds=config.BOUNDING_BOX)
+    criterion = LOSS_FUNCTION(
+        output_scaler,
+        land_mask=land_mask,
+        land_weight=LAND_WEIGHT,
+    ).to(DEVICE)
+else:
+    criterion = LOSS_FUNCTION(output_scaler).to(DEVICE)
 optimizer = torch.optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-5)
 scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=10)
 
@@ -168,6 +187,8 @@ for epoch in range(EPOCHS):
                     "output_hours": OUTPUT_HOURS,
                     "sampling_rate": SAMPLING_RATE,
                     "feature_cols": feature_cols,
+                    "loss_function": LOSS_FUNCTION.__name__,
+                    "land_weight": LAND_WEIGHT if LOSS_FUNCTION == LandMaskHaversineLoss else None,
                 },
             },
             MODEL_PATH,
